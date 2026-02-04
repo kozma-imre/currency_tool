@@ -43,7 +43,7 @@ describe('set-cron script', () => {
   it('replaces cron line in workflow file', async () => {
     const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
 
-    const { main } = require('../../scripts/set-cron');
+    const { main } = require('../../src/scripts/set-cron');
     await expect(main(['node', 'script', '0 3 * * *'] as any, wfPath)).resolves.toBeUndefined();
 
     expect(writeSpy).toHaveBeenCalled();
@@ -67,7 +67,7 @@ describe('set-cron script', () => {
     global.fetch = fakeFetch;
 
     jest.resetModules();
-    const mod = require('../../scripts/set-cron');
+    const mod = require('../../src/scripts/set-cron');
     // debug: show what the module exports in the test env
     console.log('set-cron module keys:', Object.keys(mod));
     const { main, createPullRequest } = mod;
