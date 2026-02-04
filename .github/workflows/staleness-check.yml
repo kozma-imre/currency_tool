@@ -15,10 +15,15 @@ jobs:
           node-version: '18'
       - run: npm ci
       - name: Validate secrets
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
         run: |
           if [ -z "$GOOGLE_SERVICE_ACCOUNT" ]; then echo "Missing GOOGLE_SERVICE_ACCOUNT secret; aborting"; exit 1; fi
+      - name: Skip secret validation (forked PR)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "Running on a forked PR — secrets are not available. Skipping strict secret validation and running in dry-run mode."
       - name: Run staleness check
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}

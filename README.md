@@ -26,7 +26,8 @@ Configurable schedule
 
 Automation & repo-driven schedule updates 🔁
 
-- The repository contains a `sync-cleanup-cron` workflow that can sync a cron schedule from a repository variable named `CLEANUP_CRON` into the cleanup workflow (`.github/workflows/cleanup-snapshots.yml`). The workflow runs `scripts/set-cron.ts` with `--create-pr` so changes are proposed via a **Pull Request** instead of being pushed directly.
+- The repository contains a `sync-cleanup-cron` workflow that can sync a cron schedule from a **repository variable** named `CLEANUP_CRON` into the cleanup workflow (`.github/workflows/cleanup-snapshots.yml`). The workflow runs `scripts/set-cron.ts` with `--create-pr` so changes are proposed via a **Pull Request** instead of being pushed directly.
+- To set the cleanup schedule, go to **Settings → Secrets and variables → Variables** and add `CLEANUP_CRON` with your desired cron expression (e.g. `0 6 * * 0` for weekly Sunday at 06:00 UTC). The `sync-cleanup-cron` workflow reads that variable and will open a PR with the updated schedule.
 - When run in GitHub Actions, the runner provides `GITHUB_REPOSITORY` (owner/repo) and `GITHUB_TOKEN` with scoped permissions for the repo; the workflow uses those to push a branch and open the PR. You can control the PR base branch with the `PR_BASE_BRANCH` environment variable (defaults to `main`).
 - If you want to test `--create-pr` locally, set `GITHUB_REPOSITORY=owner/repo` and `GITHUB_TOKEN` to a personal access token with repo permissions (add these to your local `.env` only for testing). Note: do not commit personal tokens to the repo.
 - To change the cleanup cron via the UI: set the **Repository variable** `CLEANUP_CRON` and run the **Sync cleanup cron** workflow from the Actions tab.
