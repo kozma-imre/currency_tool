@@ -1,0 +1,31 @@
+name: staleness-check
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # daily at 06:00 UTC (can be changed with repo variable or by editing file)
+  workflow_dispatch: {}
+
+jobs:
+  staleness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - name: Validate secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT" ]; then echo "Missing GOOGLE_SERVICE_ACCOUNT secret; aborting"; exit 1; fi
+      - name: Run staleness check
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          EXCHANGE_RATES_COLLECTION_TEST: ${{ vars.EXCHANGE_RATES_COLLECTION_TEST || 'exchange_rates_test' }}
+          MONITORING_COLLECTION: ${{ vars.MONITORING_COLLECTION || 'monitoring' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
+          STALE_AFTER_HOURS: ${{ vars.STALE_AFTER_HOURS || '48' }}
+        run: node -r dotenv/config ./node_modules/.bin/ts-node src/scripts/check-staleness.ts

@@ -21,4 +21,4 @@ jobs:
           CLEANUP_CRON: ${{ vars.CLEANUP_CRON }}
         run: |
           if [ -z "$CLEANUP_CRON" ]; then echo "CLEANUP_CRON repo variable not set; aborting"; exit 1; fi
-          node -r dotenv/config ./node_modules/.bin/ts-node src/scripts/set-cron.ts "$CLEANUP_CRON" --commit '.github/workflows/cleanup-snapshots.yml'
+          node -r dotenv/config ./node_modules/.bin/ts-node src/scripts/set-cron.ts "$CLEANUP_CRON" --create-pr '.github/workflows/cleanup-snapshots.yml'

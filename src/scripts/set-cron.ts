@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 function usage() {
-  console.log('Usage: ts-node scripts/set-cron.ts "<cron>" [--commit]');
-  console.log('Example: ts-node scripts/set-cron.ts "0 3 * * *"');
+  console.log('Usage: ts-node scripts/set-cron.ts "<cron>" [--commit] [--create-pr]');
+  console.log('Example: ts-node scripts/set-cron.ts "0 3 * * *" --create-pr');
 }
 
 function validateCron(cron: string) {
@@ -11,8 +11,46 @@ function validateCron(cron: string) {
   return cron.trim().split(/\s+/).length === 5;
 }
 
+export async function createPullRequest(branch: string, cron: string, wfPath: string) {
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GITHUB_TOKEN;
+  const base = process.env.PR_BASE_BRANCH || 'main';
+
+  if (!repo || !token) {
+    console.log('GITHUB_REPOSITORY or GITHUB_TOKEN not set; cannot create PR. Please create one manually.');
+    return;
+  }
+
+  const url = `https://api.github.com/repos/${repo}/pulls`;
+  const title = `chore: update cron schedule to ${cron}`;
+  const body = `Automated change to update workflow cron for ${wfPath} to\n\n${cron}`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ title, head: branch, base, body })
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error('Failed to create PR:', res.status, txt);
+      return;
+    }
+    const json: any = await res.json();
+    const htmlUrl = json && typeof json === 'object' ? (json as any).html_url : undefined;
+    console.log('Created PR:', htmlUrl ?? JSON.stringify(json));
+  } catch (err) {
+    console.error('Error creating PR:', err);
+  }
+}
+
 export async function main(argv?: string[], wfPathArg?: string) {
-  const [, , cron, maybeCommit] = argv ?? process.argv;
+  const args = argv ?? process.argv;
+  const [, , cron, ...flags] = args;
   if (!cron) {
     usage();
     throw new Error('missing-cron');
@@ -48,10 +86,29 @@ export async function main(argv?: string[], wfPathArg?: string) {
   fs.writeFileSync(wfPath, newContent, 'utf8');
   console.log('Updated workflow cron to:', cron);
 
-  if (maybeCommit === '--commit') {
-    // Try to commit the change. In local runs this will commit to your current branch.
-    // In GitHub Actions, ensure the checkout action ran with `persist-credentials: true` so token auth works.
-    const { execSync } = require('child_process');
+  const commit = flags.includes('--commit');
+  const createPr = flags.includes('--create-pr');
+
+  const { execSync } = require('child_process');
+
+  if (createPr) {
+    // Create a branch, commit, push, and open a PR
+    const branch = `chore/update-cron-${Date.now()}`;
+    try {
+      execSync(`git checkout -b ${branch}`, { stdio: 'inherit' });
+      execSync(`git add ${wfPath}`, { stdio: 'inherit' });
+      execSync(`git commit -m "chore: update cron schedule to ${cron} (automated)" ${wfPath}`, { stdio: 'inherit' });
+      execSync(`git push --set-upstream origin ${branch}`, { stdio: 'inherit' });
+      console.log('Pushed branch for PR:', branch);
+      await createPullRequest(branch, cron, wfPath);
+    } catch (e) {
+      console.error('Failed to create PR automatically:', e);
+      console.log('Note: --create-pr requested but PR creation failed. Please review and create a PR manually.');
+    }
+    return;
+  }
+
+  if (commit) {
     try {
       execSync(`git add ${wfPath}`, { stdio: 'inherit' });
       execSync(`git commit -m "chore: update cron schedule to ${cron} (automated)" ${wfPath}`, { stdio: 'inherit' });
@@ -62,6 +119,11 @@ export async function main(argv?: string[], wfPathArg?: string) {
       console.log('Note: --commit requested but auto-commit failed. Please review and commit the change manually.');
     }
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  // Ensure CommonJS consumers can access the helpers
+  module.exports = { main, createPullRequest };
 }
 
 if (require.main === module) {

@@ -7,7 +7,6 @@ coverage
 
 # local env files
 .env
-.env.*
 
 # editor configs
 .vscode
