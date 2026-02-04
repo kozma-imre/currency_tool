@@ -4,6 +4,12 @@ import { fetchAndStoreRates } from '../fetcher';
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
+import * as firestore from '../firestore';
+
+jest.spyOn(firestore, 'writeLatest').mockImplementation(async () => {});
+jest.spyOn(firestore, 'writeSnapshot').mockImplementation(async () => {});
+jest.spyOn(firestore, 'writeMonitoringLog').mockImplementation(async () => {});
+
 describe('fetcher with mocked axios', () => {
   beforeEach(() => jest.resetAllMocks());
 
@@ -25,6 +31,7 @@ describe('fetcher with mocked axios', () => {
     expect(payload.rates).toHaveProperty('BTC');
     expect(payload.rates.BTC).toHaveProperty('usd', 50000);
     expect(payload.meta).toHaveProperty('fiatBase', 'EUR');
+    expect(firestore.writeSnapshot).toHaveBeenCalled();
   });
 
   it('retries on failure and succeeds', async () => {

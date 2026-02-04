@@ -4,6 +4,8 @@ import { fetchAndStoreRates } from '../fetcher';
 jest.mock('../firestore', () => ({
   initFirestore: jest.fn(),
   writeLatest: jest.fn(),
+  writeSnapshot: jest.fn(),
+  writeMonitoringLog: jest.fn(),
 }));
 
 jest.mock('axios');
