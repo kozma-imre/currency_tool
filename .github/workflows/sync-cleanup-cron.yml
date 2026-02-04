@@ -1,0 +1,24 @@
+name: sync-cleanup-cron
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - name: Sync cleanup cron from repo variable
+        env:
+          CLEANUP_CRON: ${{ vars.CLEANUP_CRON }}
+        run: |
+          if [ -z "$CLEANUP_CRON" ]; then echo "CLEANUP_CRON repo variable not set; aborting"; exit 1; fi
+          node -r dotenv/config ./node_modules/.bin/ts-node src/scripts/set-cron.ts "$CLEANUP_CRON" --commit '.github/workflows/cleanup-snapshots.yml'

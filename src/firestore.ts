@@ -17,15 +17,18 @@ export async function initFirestore() {
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount as admin.ServiceAccount) });
 }
 
+const COLLECTION_NAME = process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates';
+const MONITORING_COLLECTION = process.env.MONITORING_COLLECTION ?? 'monitoring';
+
 export async function writeLatest(payload: any) {
   if (!admin.apps.length) {
     console.log('Dry-run write latest:', JSON.stringify(payload, null, 2));
     return;
   }
   const db = admin.firestore();
-  const ref = db.collection('exchange_rates').doc('latest');
+  const ref = db.collection(COLLECTION_NAME).doc('latest');
   await ref.set(payload, { merge: true });
-  console.log('Wrote latest to Firestore');
+  console.log('Wrote latest to Firestore', COLLECTION_NAME);
 }
 
 export async function writeSnapshot(payload: any, date = new Date()) {
@@ -35,9 +38,9 @@ export async function writeSnapshot(payload: any, date = new Date()) {
     return;
   }
   const db = admin.firestore();
-  const ref = db.collection('exchange_rates').doc(docId);
+  const ref = db.collection(COLLECTION_NAME).doc(docId);
   await ref.set(payload);
-  console.log('Wrote snapshot to Firestore:', docId);
+  console.log('Wrote snapshot to Firestore:', COLLECTION_NAME, docId);
 }
 
 export async function writeMonitoringLog(entry: any) {
@@ -46,6 +49,6 @@ export async function writeMonitoringLog(entry: any) {
     return;
   }
   const db = admin.firestore();
-  await db.collection('monitoring').doc().set(entry);
-  console.log('Wrote monitoring log');
+  await db.collection(MONITORING_COLLECTION).doc().set(entry);
+  console.log('Wrote monitoring log to', MONITORING_COLLECTION);
 }

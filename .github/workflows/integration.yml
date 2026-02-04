@@ -1,0 +1,21 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install deps
+        run: npm ci
+      - name: Run integration tests
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          RUN_INTEGRATION_TESTS: 'true'
+          EXCHANGE_RATES_COLLECTION: 'exchange_rates_integration'
+        run: npm run test:integration

@@ -40,7 +40,18 @@ export async function main(argv?: string[], wfPathArg?: string) {
   console.log('Updated workflow cron to:', cron);
 
   if (maybeCommit === '--commit') {
-    console.log('Note: --commit requested but this script will not run git commands automatically. Please review and commit the change.')
+    // Try to commit the change. In local runs this will commit to your current branch.
+    // In GitHub Actions, ensure the checkout action ran with `persist-credentials: true` so token auth works.
+    const { execSync } = require('child_process');
+    try {
+      execSync(`git add ${wfPath}`, { stdio: 'inherit' });
+      execSync(`git commit -m "chore: update cron schedule to ${cron} (automated)" ${wfPath}`, { stdio: 'inherit' });
+      execSync('git push', { stdio: 'inherit' });
+      console.log('Committed and pushed workflow change.');
+    } catch (e) {
+      console.error('Failed to commit workflow change automatically:', e);
+      console.log('Note: --commit requested but auto-commit failed. Please review and commit the change manually.');
+    }
   }
 }
 

@@ -24,16 +24,26 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
     ids: cryptoIds.join(','),
     vs_currencies: vsCurrencies.join(','),
   };
-  const res = await axios.get(COINGECKO_URL, { params, timeout: 10000 });
+  const headers: Record<string, string> = {};
+  if (process.env.COINGECKO_API_KEY) {
+    // Use CoinGecko Pro API header if provided
+    headers['X-CG-PRO-API-KEY'] = process.env.COINGECKO_API_KEY;
+  }
+  const config: any = { params, timeout: 10000 };
+  if (Object.keys(headers).length) config.headers = headers;
+  const res = await axios.get(COINGECKO_URL, config);
   return { provider: 'coingecko', data: res.data, headers: res.headers };
 }
 
 async function fetchCryptoFromBinance(symbols: string[]) {
   // Binance returns per-symbol; fetch sequentially and build a structure similar to CoinGecko
   const out: Record<string, any> = {};
+  const binanceHeaders: Record<string, string> | undefined = process.env.BINANCE_KEY ? { 'X-MBX-APIKEY': process.env.BINANCE_KEY } : undefined;
   for (const sym of symbols) {
     const pair = sym + 'USDT';
-    const res = await axios.get(BINANCE_URL, { params: { symbol: pair }, timeout: 10000 });
+    const config: any = { params: { symbol: pair }, timeout: 10000 };
+    if (binanceHeaders) config.headers = binanceHeaders;
+    const res = await axios.get(BINANCE_URL, config);
     const price = Number(res.data.price);
     const mapped = BINANCE_MAP[pair] ?? sym;
     out[mapped] = { usd: price, eur: undefined };
@@ -70,14 +80,20 @@ export async function fetchAndStoreRates() {
   }
   const start = Date.now();
 
+  // Read configured cryptos / fiats from env (defaults)
+  const configuredIds = (process.env.CRYPTO_IDS ?? 'bitcoin,ethereum').split(',').map(s => s.trim()).filter(Boolean);
+  const fiatCurrencies = (process.env.FIAT_CURRENCIES ?? 'usd,eur').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  // Binance symbols: explicit override or derive from COINGECKO_MAP or uppercase ids
+  const configuredSymbols = (process.env.CRYPTO_SYMBOLS && process.env.CRYPTO_SYMBOLS.split(',').map(s => s.trim()).filter(Boolean)) || configuredIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
+
   let provider = 'coingecko';
   let cryptoResult: any;
   try {
-    cryptoResult = await retry(() => fetchCryptoFromCoingecko(['bitcoin', 'ethereum'], ['usd', 'eur']), 2);
+    cryptoResult = await retry(() => fetchCryptoFromCoingecko(configuredIds, fiatCurrencies), 2);
   } catch (err) {
     console.warn('CoinGecko fetch failed, trying Binance fallback', err);
     try {
-      cryptoResult = await retry(() => fetchCryptoFromBinance(['BTC', 'ETH']), 2);
+      cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
       provider = 'binance';
     } catch (err2) {
       const durationMs = Date.now() - start;
@@ -101,26 +117,52 @@ export async function fetchAndStoreRates() {
     }
   }
 
-  const meta = {
+  const headersObj = (cryptoResult.headers && typeof (cryptoResult.headers as any).toJSON === 'function')
+    ? (cryptoResult.headers as any).toJSON()
+    : JSON.parse(JSON.stringify(cryptoResult.headers ?? {}));
+
+  // Whitelist headers we want to keep in the lightweight `latest` doc
+  const HEADER_WHITELIST = ['etag', 'cache-control', 'date', 'retry-after', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'];
+  const filteredHeaders: Record<string, any> = {};
+  for (const [k, v] of Object.entries(headersObj || {})) {
+    const lk = String(k).toLowerCase();
+    if (HEADER_WHITELIST.includes(lk)) {
+      filteredHeaders[lk] = v;
+    }
+  }
+
+  const fetchedAt = new Date().toISOString();
+
+  // Minimal payload for `latest` — small and stable for clients
+  const latestPayload = {
     provider,
-    fetchedAt: new Date().toISOString(),
-    headers: cryptoResult.headers ?? {},
-    rawResponse: truncateRaw(cryptoResult.data),
-    fiatBase: fiat?.base ?? 'EUR',
+    timestamp: fetchedAt,
+    rates,
+    meta: {
+      fetchedAt,
+      fiatBase: fiat?.base ?? 'EUR',
+      headers: filteredHeaders,
+    },
   };
 
-  const payload = {
+  // Full snapshot with raw response and more verbose metadata for debugging/audit
+  const snapshotPayload = {
     provider,
-    timestamp: new Date().toISOString(),
+    timestamp: fetchedAt,
     rates,
-    meta,
+    meta: {
+      fetchedAt,
+      fiatBase: fiat?.base ?? 'EUR',
+      headers: headersObj,
+      rawResponse: JSON.stringify(cryptoResult.data),
+    },
   };
 
   const durationMs = Date.now() - start;
-  await writeMonitoringLog({ runId, provider, operation: 'fetch_and_store', durationMs, status: 'ok', meta: { fetchedAt: meta.fetchedAt }, timestamp: new Date().toISOString() });
+  await writeMonitoringLog({ runId, provider, operation: 'fetch_and_store', durationMs, status: 'ok', meta: { fetchedAt }, timestamp: new Date().toISOString() });
 
-  await writeLatest(payload);
-  await writeSnapshot(payload, new Date());
+  await writeLatest(latestPayload);
+  await writeSnapshot(snapshotPayload, new Date());
 
-  return payload;
+  return latestPayload;
 }

@@ -33,8 +33,64 @@ Running locally
 ---------------
 
 - Install dependencies: `npm ci`
-- Run tests: `npm test`
-- One-off fetch (dry-run if no service account): `npm run fetch`
+- Run unit tests: `npm test`
+- Run integration tests (writes to Firestore): create a `.env` with `GOOGLE_SERVICE_ACCOUNT` set to the service account JSON string and set `RUN_INTEGRATION_TESTS=true` then run:
+
+```bash
+# example (.env)
+# GOOGLE_SERVICE_ACCOUNT='{"type":"service_account", ... }'
+# RUN_INTEGRATION_TESTS=true
+
+npm run test:integration
+```
+
+Data shape & snapshot retention
+-------------------------------
+
+- `latest` (lightweight, read by clients):
+
+```json
+{
+  "provider": "coingecko",
+  "timestamp": "2026-02-04T09:50:15.263Z",
+  "rates": { "BTC": { "usd": 76038, "eur": 64340 }, "ETH": { "usd": 2253.76 } },
+  "meta": {
+    "fetchedAt": "2026-02-04T09:50:15.263Z",
+    "fiatBase": "EUR",
+    "headers": { "etag": "W/\"e77f...\"", "cache-control": "max-age=30" }
+  }
+}
+```
+
+- `snapshot` (daily history, full debug info): stored as `history-YYYY-MM-DD` and contains the full `rawResponse` and complete headers for auditing and troubleshooting.
+- Default retention: **30 days**. Configure with `SNAPSHOT_RETENTION_DAYS` (env) or change in the scheduled cleanup workflow.
+- To clean up snapshots manually (safe dry-run first):
+
+```bash
+# dry-run
+npm run cleanup-snapshots -- --dry-run
+
+# delete older-than default (30 days)
+npm run cleanup-snapshots
+
+# override retention
+SNAPSHOT_RETENTION_DAYS=7 npm run cleanup-snapshots
+```
+
+Optional provider keys (local / CI)
+- You can set provider keys in `.env` or as GitHub Secrets:
+  - `COINGECKO_API_KEY` — optional CoinGecko Pro key. If set, requests will include the `X-CG-PRO-API-KEY` header.
+  - `BINANCE_KEY` — optional Binance API key. When present it's sent in the `X-MBX-APIKEY` header (used for authenticated requests).
+  - `BINANCE_SECRET` — optional Binance secret (for future signed calls; not required for public price endpoints).
+- Configure which cryptos/fiats to fetch (env / GitHub Secrets):
+  - `CRYPTO_IDS` — comma-separated CoinGecko ids (default: `bitcoin,ethereum`).
+  - `CRYPTO_SYMBOLS` — optional comma-separated symbols for Binance (default derived from `CRYPTO_IDS`).
+  - `FIAT_CURRENCIES` — comma-separated fiat codes (default: `usd,eur`).
+- For alerting later, you may set `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (optional).
+
+Notes:
+- Integration tests will write to the Firestore collection specified by `EXCHANGE_RATES_COLLECTION` (default: `exchange_rates_integration_test` when running tests). To avoid touching production data, use a dedicated test Firestore project and service account.
+- For CI: add `GOOGLE_SERVICE_ACCOUNT` (JSON file content) as a GitHub repository secret and run the `Integration Tests` workflow from the Actions tab (manual `workflow_dispatch`).
 
 Security & publishing
 ---------------------
