@@ -10,7 +10,7 @@
     "set-cleanup-cron": "ts-node src/scripts/set-cron.ts '.github/workflows/cleanup-snapshots.yml'",
     "cleanup-snapshots": "ts-node src/scripts/cleanup-snapshots.ts",
     "test": "jest",
-    "test:integration": "jest src/__tests__/integration.firetest.ts --runInBand",
+    "test:integration": "jest --testMatch '**/__tests__/**/*.firetest.ts' --runInBand",
     "lint": "eslint . --ext .ts"
   },
   "keywords": [],

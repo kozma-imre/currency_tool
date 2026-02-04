@@ -17,8 +17,23 @@ export async function initFirestore() {
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount as admin.ServiceAccount) });
 }
 
-const COLLECTION_NAME = process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates';
-const MONITORING_COLLECTION = process.env.MONITORING_COLLECTION ?? 'monitoring';
+let configuredExchangeRatesCollection: string | undefined;
+let configuredMonitoringCollection: string | undefined;
+
+export function configureFirestore(opts: { exchangeRatesCollection?: string; monitoringCollection?: string } = {}) {
+  if (opts.exchangeRatesCollection) configuredExchangeRatesCollection = opts.exchangeRatesCollection;
+  if (opts.monitoringCollection) configuredMonitoringCollection = opts.monitoringCollection;
+}
+
+export function getCollectionName() {
+  if (configuredExchangeRatesCollection) return configuredExchangeRatesCollection;
+  // Only use test env var when integration tests are explicitly enabled
+  if (process.env.RUN_INTEGRATION_TESTS === 'true' && process.env.EXCHANGE_RATES_COLLECTION_TEST) return process.env.EXCHANGE_RATES_COLLECTION_TEST;
+  return process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates';
+}
+export function getMonitoringCollection() {
+  return configuredMonitoringCollection ?? process.env.MONITORING_COLLECTION ?? 'monitoring';
+}
 
 export async function writeLatest(payload: any) {
   if (!admin.apps.length) {
@@ -26,9 +41,10 @@ export async function writeLatest(payload: any) {
     return;
   }
   const db = admin.firestore();
-  const ref = db.collection(COLLECTION_NAME).doc('latest');
+  const collectionName = getCollectionName();
+  const ref = db.collection(collectionName).doc('latest');
   await ref.set(payload, { merge: true });
-  console.log('Wrote latest to Firestore', COLLECTION_NAME);
+  console.log('Wrote latest to Firestore', collectionName);
 }
 
 export async function writeSnapshot(payload: any, date = new Date()) {
@@ -38,9 +54,10 @@ export async function writeSnapshot(payload: any, date = new Date()) {
     return;
   }
   const db = admin.firestore();
-  const ref = db.collection(COLLECTION_NAME).doc(docId);
+  const collectionName = getCollectionName();
+  const ref = db.collection(collectionName).doc(docId);
   await ref.set(payload);
-  console.log('Wrote snapshot to Firestore:', COLLECTION_NAME, docId);
+  console.log('Wrote snapshot to Firestore:', collectionName, docId);
 }
 
 export async function writeMonitoringLog(entry: any) {
@@ -49,6 +66,7 @@ export async function writeMonitoringLog(entry: any) {
     return;
   }
   const db = admin.firestore();
-  await db.collection(MONITORING_COLLECTION).doc().set(entry);
-  console.log('Wrote monitoring log to', MONITORING_COLLECTION);
+  const monitoringCollection = getMonitoringCollection();
+  await db.collection(monitoringCollection).doc().set(entry);
+  console.log('Wrote monitoring log to', monitoringCollection);
 }

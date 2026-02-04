@@ -13,13 +13,20 @@ describe('integration: Firestore write', () => {
   }
 
   beforeAll(async () => {
+    // explicitly configure test collection first to avoid accidental production writes
+    const testCol = process.env.EXCHANGE_RATES_COLLECTION_TEST ?? 'exchange_rates_test';
+    const monCol = process.env.MONITORING_COLLECTION ?? 'monitoring';
+    const { configureFirestore } = require('../firestore');
+    configureFirestore({ exchangeRatesCollection: testCol, monitoringCollection: monCol });
+
     // init from env
     await initFirestore();
   });
 
   it('writes latest and snapshot to Firestore', async () => {
     // Use a test collection name to avoid interfering with production data
-    process.env.EXCHANGE_RATES_COLLECTION = process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates_integration_test';
+    // Prefer an explicit test collection to avoid touching production data
+    process.env.EXCHANGE_RATES_COLLECTION = process.env.EXCHANGE_RATES_COLLECTION_TEST ?? process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates_integration_test';
 
     const payload = await fetchAndStoreRates();
     expect(payload).toHaveProperty('provider');

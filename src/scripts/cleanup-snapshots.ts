@@ -14,7 +14,9 @@ export async function cleanupSnapshots(db?: FirebaseFirestore.Firestore, retenti
   const cutoff = new Date();
   cutoff.setUTCDate(cutoff.getUTCDate() - retentionDays);
 
-  const collectionName = process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates';
+  // Use the configured collection name from firestore module (safer and explicit)
+  const { getCollectionName } = require('../firestore');
+  const collectionName = getCollectionName();
   const col = db.collection(collectionName);
   const snap = await col.get();
 

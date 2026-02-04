@@ -89,7 +89,7 @@ Optional provider keys (local / CI)
 - For alerting later, you may set `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (optional).
 
 Notes:
-- Integration tests will write to the Firestore collection specified by `EXCHANGE_RATES_COLLECTION` (default: `exchange_rates_integration_test` when running tests). To avoid touching production data, use a dedicated test Firestore project and service account.
+- Integration tests will write to the Firestore collection specified by `EXCHANGE_RATES_COLLECTION_TEST` (if set) or `EXCHANGE_RATES_COLLECTION` (default: `exchange_rates_integration_test` when running tests). To avoid touching production data, set `EXCHANGE_RATES_COLLECTION_TEST=exchange_rates_test` in your `.env`, and use a dedicated test Firestore project and service account.
 - For CI: add `GOOGLE_SERVICE_ACCOUNT` (JSON file content) as a GitHub repository secret and run the `Integration Tests` workflow from the Actions tab (manual `workflow_dispatch`).
 
 Security & publishing

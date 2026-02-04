@@ -11,11 +11,17 @@ describe('integration: cleanup snapshots', () => {
   }
 
   beforeAll(async () => {
+    // configure explicit test collection for cleanup test
+    const testCol = process.env.EXCHANGE_RATES_COLLECTION_TEST ?? 'exchange_rates_test';
+    const monCol = process.env.MONITORING_COLLECTION ?? 'monitoring';
+    const { configureFirestore } = require('../firestore');
+    configureFirestore({ exchangeRatesCollection: testCol, monitoringCollection: monCol });
+
     await initFirestore();
   });
 
   it('creates old and new snapshots and deletes old ones', async () => {
-    const collection = process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates_integration_test_cleanup';
+    const collection = process.env.EXCHANGE_RATES_COLLECTION_TEST ?? process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates_integration_test_cleanup';
     const db = admin.firestore();
 
     // create an old snapshot (2 days ago)

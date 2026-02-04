@@ -30,11 +30,20 @@ export async function main(argv?: string[], wfPathArg?: string) {
     console.error('Workflow file not found at', wfPath);
     throw new Error('missing-workflow');
   }
-  const newContent = content.replace(/(schedule:\s*\n\s*-\s*cron:\s*')([^']*)(')/m, `$1${cron}$3`);
-  if (newContent === content) {
-    console.error('Failed to replace cron (pattern not found)');
+  // Replace the cron under the schedule: block; be tolerant of comments/blank lines
+  const schedIdx = content.indexOf('schedule:');
+  if (schedIdx === -1) {
+    console.error('Workflow file does not contain a schedule: block');
+    throw new Error('missing-schedule');
+  }
+  const before = content.slice(0, schedIdx);
+  const after = content.slice(schedIdx);
+  const replaced = after.replace(/(-\s*cron:\s*')([^']*)(')/m, `$1${cron}$3`);
+  if (replaced === after) {
+    console.error('Failed to replace cron (pattern not found in schedule block)');
     throw new Error('pattern-not-found');
   }
+  const newContent = before + replaced;
 
   fs.writeFileSync(wfPath, newContent, 'utf8');
   console.log('Updated workflow cron to:', cron);

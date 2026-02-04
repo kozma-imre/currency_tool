@@ -8,14 +8,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
       - name: Install deps
         run: npm ci
-      - name: Run integration tests
+      - name: Validate secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT" ]; then echo "Missing GOOGLE_SERVICE_ACCOUNT secret; aborting"; exit 1; fi
+      - name: Run integration tests (manual)
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           RUN_INTEGRATION_TESTS: 'true'
-          EXCHANGE_RATES_COLLECTION: 'exchange_rates_integration'
+          EXCHANGE_RATES_COLLECTION_TEST: 'exchange_rates_test'
+          MONITORING_COLLECTION: 'monitoring'
         run: npm run test:integration
