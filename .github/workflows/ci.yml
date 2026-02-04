@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    environment: Prod
     strategy:
       matrix:
         node-version: [18]

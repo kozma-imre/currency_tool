@@ -6,6 +6,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    environment: Prod
     permissions:
       contents: write
     steps:

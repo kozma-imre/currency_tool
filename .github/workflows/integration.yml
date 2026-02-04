@@ -6,6 +6,7 @@ on:
 jobs:
   integration:
     runs-on: ubuntu-latest
+    environment: Prod
     steps:
       - uses: actions/checkout@v4
         with:
