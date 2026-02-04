@@ -25,12 +25,12 @@ jobs:
       - name: Validate Telegram secrets
         env:
           TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || var.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ "${TELEGRAM_ALERTING_ENABLED}" = "true" ]; then
             if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
-              echo "Telegram alerting is enabled but secrets are missing; disabling alerts for this run"
+              echo "Telegram alerting is enabled but token/chat-id missing; disabling alerts for this run"
               echo "TELEGRAM_ALERTING_ENABLED=false" >> $GITHUB_ENV
             fi
           fi
@@ -46,15 +46,15 @@ jobs:
           COINGECKO_MAX_IDS_PER_REQUEST: ${{ vars.COINGECKO_MAX_IDS_PER_REQUEST || secrets.COINGECKO_MAX_IDS_PER_REQUEST || '20' }}
           COINGECKO_BATCH_DELAY_MS: ${{ vars.COINGECKO_BATCH_DELAY_MS || secrets.COINGECKO_BATCH_DELAY_MS || '1000' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
           TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
         run: npm run fetch
 
       - name: Notify Telegram on failure
         if: failure()
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ vars.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
         run: |
           if [ "${TELEGRAM_ALERTING_ENABLED}" != "true" ]; then

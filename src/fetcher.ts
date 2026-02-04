@@ -172,6 +172,23 @@ async function fetchCryptoFromBinance(symbols: string[]) {
   return { provider: 'binance', data: out, headers: {} };
 }
 
+// CoinCap is a free public API that does not require registration for basic asset prices
+async function fetchCryptoFromCoinCap(cryptoIds: string[]) {
+  // CoinCap supports comma-separated ids via /v2/assets?ids=
+  const out: Record<string, any> = {};
+  if (!cryptoIds || cryptoIds.length === 0) return { provider: 'coincap', data: out, headers: {} };
+  const params = { ids: cryptoIds.join(',') };
+  const res = await axios.get('https://api.coincap.io/v2/assets', { params, timeout: 10000 });
+  const data = res.data && res.data.data ? res.data.data : [];
+  for (const item of data) {
+    const id = String(item.id);
+    const priceUsd = Number(item.priceUsd);
+    const symbol = COINGECKO_MAP[id] ?? id.toUpperCase();
+    out[symbol] = { usd: priceUsd, eur: undefined };
+  }
+  return { provider: 'coincap', data: out, headers: res.headers };
+}
+
 async function fetchFiat() {
   const res = await axios.get(ECB_URL, { timeout: 10000 });
   return res.data; // { base, date, rates: { USD: 1.08, ... } }
@@ -271,16 +288,24 @@ export async function fetchAndStoreRates() {
           cryptoResult.data = { ...(cryptoResult.data || {}), ...(binRes.data || {}) };
           provider = 'coingecko+binance';
         } catch (err2: any) {
-          // If Binance is geo-blocked (451), send alert and proceed with partial CoinGecko data
+          // If Binance is geo-blocked (451), try CoinCap as an alternative public fallback
           const status = err2?.response?.status;
           if (status === 451) {
-            console.warn('Binance returned 451 (restricted location). Proceeding with partial CoinGecko data.');
+            console.warn('Binance returned 451 (restricted location). Trying CoinCap fallback for missing symbols.');
             try {
-              await sendTelegramAlert(`Binance returned 451 (restricted location) while fetching fallback for missing symbols: ${missingSymbols.join(', ')}. Proceeding with partial CoinGecko data.`);
-            } catch (e) {
-              // ignore alert failures
+              const ccRes = await retry(() => fetchCryptoFromCoinCap(missingIds), 1);
+              // merge CoinCap results
+              cryptoResult.data = { ...(cryptoResult.data || {}), ...(ccRes.data || {}) };
+              provider = 'coingecko+coincap';
+            } catch (ccErr: any) {
+              console.warn('CoinCap fallback failed', ccErr?.message || ccErr);
+              try {
+                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinCap fallback failed for missing symbols: ${missingSymbols.join(', ')}. Proceeding with partial CoinGecko data.`);
+              } catch (e) {
+                // ignore alert failures
+              }
+              // proceed using partial coinGecko data
             }
-            // proceed using partial coinGecko data
           } else {
             const durationMs = Date.now() - start;
             await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
@@ -294,17 +319,30 @@ export async function fetchAndStoreRates() {
         cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
         provider = 'binance';
       } catch (err2: any) {
-        // If Binance is geo-blocked (451) but we have partial CoinGecko data, proceed with partial data and alert
+        // If Binance is geo-blocked (451) try CoinCap fallback; if we have partial CoinGecko data, proceed
         const status = err2?.response?.status;
         const partialCount = cryptoResult && cryptoResult.data ? Object.keys(cryptoResult.data).length : 0;
-        if (status === 451 && partialCount > 0) {
-          console.warn('Binance returned 451 on full fallback but we have partial CoinGecko data; proceeding and sending alert.');
+        if (status === 451) {
+          console.warn('Binance returned 451 on full fallback; attempting CoinCap as a public fallback.');
           try {
-            await sendTelegramAlert(`Binance returned 451 (restricted location) while performing full fallback. Proceeding with partial CoinGecko data. Missing symbols: ${JSON.stringify(configuredIds.filter(id => !(cryptoResult.data || {})[id]))}`);
-          } catch (e) {
-            // ignore alert failures
+            const ccRes = await retry(() => fetchCryptoFromCoinCap(filteredIds.length ? filteredIds : configuredIds), 1);
+            cryptoResult = ccRes;
+            provider = 'coincap';
+          } catch (ccErr: any) {
+            console.warn('CoinCap fallback failed', ccErr?.message || ccErr);
+            if (partialCount > 0) {
+              try {
+                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinCap fallback failed. Proceeding with partial CoinGecko data.`);
+              } catch (e) {
+                // ignore alert failures
+              }
+              // proceed using partial data
+            } else {
+              const durationMs = Date.now() - start;
+              await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
+              throw err2;
+            }
           }
-          // proceed using partial data
         } else {
           const durationMs = Date.now() - start;
           await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
