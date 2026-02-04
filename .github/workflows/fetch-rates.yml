@@ -24,4 +24,13 @@ jobs:
       - name: Fetch & store rates
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          BINANCE_KEY: ${{ secrets.BINANCE_KEY }}
+          BINANCE_SECRET: ${{ secrets.BINANCE_SECRET }}
+          CRYPTO_IDS: ${{ vars.CRYPTO_IDS || secrets.CRYPTO_IDS || 'bitcoin,ethereum' }}
+          CRYPTO_SYMBOLS: ${{ vars.CRYPTO_SYMBOLS || secrets.CRYPTO_SYMBOLS || '' }}
+          FIAT_CURRENCIES: ${{ vars.FIAT_CURRENCIES || secrets.FIAT_CURRENCIES || 'usd,eur' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
         run: npm run fetch
