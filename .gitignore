@@ -1,0 +1,27 @@
+# dependencies
+node_modules
+
+# build outputs
+dist
+coverage
+
+# local env files
+.env
+.env.*
+
+# editor configs
+.vscode
+.idea
+
+# OS files
+.DS_Store
+
+# logs
+npm-debug.log
+yarn-error.log
+
+# Firebase / local keys
+firebase-debug.log
+service-account*.json
+*.key
+*.pem
