@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { initFirestore, writeLatest, writeSnapshot, writeMonitoringLog } from './firestore';
+import { sendTelegramAlert } from './notify/telegram';
 import type { RatesResult } from './types';
 
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
@@ -14,6 +15,13 @@ const BINANCE_URL = 'https://api.binance.com/api/v3/ticker/price';
 
 const COINGECKO_COINS_CACHE_TTL = Number(process.env.COINGECKO_COINS_CACHE_TTL) || 24 * 60 * 60; // seconds
 const COINGECKO_COINS_CACHE_FILE = path.join(os.tmpdir(), 'coingecko-coins.json');
+
+const COINGECKO_MAX_IDS_PER_REQUEST = Number(process.env.COINGECKO_MAX_IDS_PER_REQUEST) || 50;
+const COINGECKO_BATCH_DELAY_MS = Number(process.env.COINGECKO_BATCH_DELAY_MS) || 300;
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 async function fetchSupportedCoinIds(): Promise<Set<string>> {
   // During tests, skip cache to avoid inter-test file pollution and always hit the mocked endpoint
@@ -89,19 +97,58 @@ function truncateRaw(obj: any, max = 2000) {
 }
 
 async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: string[]) {
-  const params = {
-    ids: cryptoIds.join(','),
-    vs_currencies: vsCurrencies.join(','),
-  };
+  // Chunk ids into batches to avoid large single requests and rate-limits
   const headers: Record<string, string> = {};
   if (process.env.COINGECKO_API_KEY) {
-    // Use CoinGecko Pro API header if provided
     headers['X-CG-PRO-API-KEY'] = process.env.COINGECKO_API_KEY;
   }
-  const config: any = { params, timeout: 10000 };
-  if (Object.keys(headers).length) config.headers = headers;
-  const res = await axios.get(COINGECKO_URL, config);
-  return { provider: 'coingecko', data: res.data, headers: res.headers };
+
+  const out: Record<string, any> = {};
+  const collectedHeaders: Record<string, any> = {};
+  const batches: string[][] = [];
+  for (let i = 0; i < cryptoIds.length; i += COINGECKO_MAX_IDS_PER_REQUEST) {
+    batches.push(cryptoIds.slice(i, i + COINGECKO_MAX_IDS_PER_REQUEST));
+  }
+
+  for (let bi = 0; bi < batches.length; bi++) {
+    const batch = batches[bi];
+    if (!batch) continue;
+    const params = { ids: batch.join(','), vs_currencies: vsCurrencies.join(',') };
+    const config: any = { params, timeout: 10000 };
+    if (Object.keys(headers).length) config.headers = headers;
+
+    // Use retry but also honor Retry-After header on 429
+    try {
+      await retry(async () => {
+        try {
+          const res = await axios.get(COINGECKO_URL, config);
+          Object.assign(out, res.data || {});
+          if (res && res.headers) Object.assign(collectedHeaders, res.headers);
+          return res;
+        } catch (err: any) {
+          const status = err?.response?.status;
+          const rh = err?.response?.headers?.['retry-after'];
+          if (status === 429 && rh) {
+            const waitSec = Number(rh) || 1;
+            // Respect Retry-After before retrying
+            await sleep(waitSec * 1000 + 250);
+          }
+          // rethrow so retry() wrapper can apply backoff
+          throw err;
+        }
+      }, 2);
+    } catch (err: any) {
+      // If a batch fails even after retries, log and continue with partial results
+      console.warn('CoinGecko batch failed for ids', batch, 'error:', err?.message || err);
+    }
+
+    // small delay between batches to avoid bursts
+    if (bi < batches.length - 1) await sleep(COINGECKO_BATCH_DELAY_MS);
+  }
+
+  // determine missing ids
+  const missing: string[] = cryptoIds.filter(id => !(id in out));
+  return { provider: 'coingecko', data: out, headers: collectedHeaders, missing };
 }
 
 async function fetchCryptoFromBinance(symbols: string[]) {
@@ -196,9 +243,48 @@ export async function fetchAndStoreRates() {
       console.warn('Dropping unsupported CoinGecko ids:', dropped);
     }
     try {
-      cryptoResult = await retry(() => fetchCryptoFromCoingecko(filteredIds, coinGeckoFiats), 2);
+      // Use CoinGecko in batched mode; it will return partial data + `missing` ids if some batches failed
+      cryptoResult = await fetchCryptoFromCoingecko(filteredIds, coinGeckoFiats);
+      // If CoinGecko returned only partial results, attempt Binance fallback for missing symbols
+      const missingIds: string[] = cryptoResult.missing || [];
+      const succeededCount = Object.keys(cryptoResult.data || {}).length;
+      if (succeededCount === 0 && missingIds.length) {
+        // no data from CoinGecko, treat as full failure and fallback to Binance entirely
+        try {
+          cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
+          provider = 'binance';
+        } catch (err2) {
+          const durationMs = Date.now() - start;
+          await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
+          throw err2;
+        }
+      } else if (missingIds.length) {
+        const missingSymbols = missingIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
+        try {
+          const binRes = await retry(() => fetchCryptoFromBinance(missingSymbols), 2);
+          // merge binance results in
+          cryptoResult.data = { ...(cryptoResult.data || {}), ...(binRes.data || {}) };
+          provider = 'coingecko+binance';
+        } catch (err2: any) {
+          // If Binance is geo-blocked (451), send alert and proceed with partial CoinGecko data
+          const status = err2?.response?.status;
+          if (status === 451) {
+            console.warn('Binance returned 451 (restricted location). Proceeding with partial CoinGecko data.');
+            try {
+              await sendTelegramAlert(`Binance returned 451 (restricted location) while fetching fallback for missing symbols: ${missingSymbols.join(', ')}. Proceeding with partial CoinGecko data.`);
+            } catch (e) {
+              // ignore alert failures
+            }
+            // proceed using partial coinGecko data
+          } else {
+            const durationMs = Date.now() - start;
+            await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
+            throw err2;
+          }
+        }
+      }
     } catch (err) {
-      console.warn('CoinGecko fetch failed, trying Binance fallback', err);
+      console.warn('CoinGecko fetch failed entirely, trying Binance fallback', err);
       try {
         cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
         provider = 'binance';
