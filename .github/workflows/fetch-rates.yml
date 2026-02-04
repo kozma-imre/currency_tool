@@ -12,6 +12,14 @@ jobs:
         with:
           node-version: '18'
       - run: npm ci
+      - name: Validate required secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT" ]; then
+            echo "Missing GOOGLE_SERVICE_ACCOUNT secret; aborting"
+            exit 1
+          fi
       - name: Fetch & store rates
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
