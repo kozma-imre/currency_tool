@@ -110,40 +110,45 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
     batches.push(cryptoIds.slice(i, i + COINGECKO_MAX_IDS_PER_REQUEST));
   }
 
-  for (let bi = 0; bi < batches.length; bi++) {
-    const batch = batches[bi];
-    if (!batch) continue;
-    const params = { ids: batch.join(','), vs_currencies: vsCurrencies.join(',') };
-    const config: any = { params, timeout: 10000 };
-    if (Object.keys(headers).length) config.headers = headers;
+  try {
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi];
+      if (!batch) continue;
+      const params = { ids: batch.join(','), vs_currencies: vsCurrencies.join(',') };
+      const config: any = { params, timeout: 10000 };
+      if (Object.keys(headers).length) config.headers = headers;
 
-    // Use retry but also honor Retry-After header on 429
-    try {
-      await retry(async () => {
-        try {
-          const res = await axios.get(COINGECKO_URL, config);
-          Object.assign(out, res.data || {});
-          if (res && res.headers) Object.assign(collectedHeaders, res.headers);
-          return res;
-        } catch (err: any) {
-          const status = err?.response?.status;
-          const rh = err?.response?.headers?.['retry-after'];
-          if (status === 429 && rh) {
-            const waitSec = Number(rh) || 1;
-            // Respect Retry-After before retrying
-            await sleep(waitSec * 1000 + 250);
+      // Use retry but also honor Retry-After header on 429
+      try {
+        await retry(async () => {
+          try {
+            const res = await axios.get(COINGECKO_URL, config);
+            Object.assign(out, res.data || {});
+            if (res && res.headers) Object.assign(collectedHeaders, res.headers);
+            return res;
+          } catch (err: any) {
+            const status = err?.response?.status;
+            const rh = err?.response?.headers?.['retry-after'];
+            if (status === 429 && rh) {
+              const waitSec = Number(rh) || 1;
+              // Respect Retry-After before retrying
+              await sleep(waitSec * 1000 + 250);
+            }
+            // rethrow so retry() wrapper can apply backoff
+            throw err;
           }
-          // rethrow so retry() wrapper can apply backoff
-          throw err;
-        }
-      }, 2);
-    } catch (err: any) {
-      // If a batch fails even after retries, log and continue with partial results
-      console.warn('CoinGecko batch failed for ids', batch, 'error:', err?.message || err);
-    }
+        }, 2);
+      } catch (err: any) {
+        // If a batch fails even after retries, log and continue with partial results
+        console.warn('CoinGecko batch failed for ids', batch, 'error:', err?.message || err);
+      }
 
-    // small delay between batches to avoid bursts
-    if (bi < batches.length - 1) await sleep(COINGECKO_BATCH_DELAY_MS);
+      // small delay between batches to avoid bursts
+      if (bi < batches.length - 1) await sleep(COINGECKO_BATCH_DELAY_MS);
+    }
+  } catch (err: any) {
+    // Unexpected global error while attempting to fetch CoinGecko; return whatever partial data we have
+    console.warn('CoinGecko fetch experienced unexpected error; returning partial results', err?.message || err);
   }
 
   // determine missing ids
@@ -288,10 +293,23 @@ export async function fetchAndStoreRates() {
       try {
         cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
         provider = 'binance';
-      } catch (err2) {
-        const durationMs = Date.now() - start;
-        await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
-        throw err2;
+      } catch (err2: any) {
+        // If Binance is geo-blocked (451) but we have partial CoinGecko data, proceed with partial data and alert
+        const status = err2?.response?.status;
+        const partialCount = cryptoResult && cryptoResult.data ? Object.keys(cryptoResult.data).length : 0;
+        if (status === 451 && partialCount > 0) {
+          console.warn('Binance returned 451 on full fallback but we have partial CoinGecko data; proceeding and sending alert.');
+          try {
+            await sendTelegramAlert(`Binance returned 451 (restricted location) while performing full fallback. Proceeding with partial CoinGecko data. Missing symbols: ${JSON.stringify(configuredIds.filter(id => !(cryptoResult.data || {})[id]))}`);
+          } catch (e) {
+            // ignore alert failures
+          }
+          // proceed using partial data
+        } else {
+          const durationMs = Date.now() - start;
+          await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
+          throw err2;
+        }
       }
     }
   }

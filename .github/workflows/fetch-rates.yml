@@ -21,6 +21,19 @@ jobs:
             echo "Missing GOOGLE_SERVICE_ACCOUNT secret; aborting"
             exit 1
           fi
+
+      - name: Validate Telegram secrets
+        env:
+          TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${TELEGRAM_ALERTING_ENABLED}" = "true" ]; then
+            if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+              echo "Telegram alerting is enabled but secrets are missing; disabling alerts for this run"
+              echo "TELEGRAM_ALERTING_ENABLED=false" >> $GITHUB_ENV
+            fi
+          fi
       - name: Fetch & store rates
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
@@ -30,6 +43,8 @@ jobs:
           CRYPTO_IDS: ${{ vars.CRYPTO_IDS || secrets.CRYPTO_IDS || 'bitcoin,ethereum' }}
           CRYPTO_SYMBOLS: ${{ vars.CRYPTO_SYMBOLS || secrets.CRYPTO_SYMBOLS || '' }}
           FIAT_CURRENCIES: ${{ vars.FIAT_CURRENCIES || secrets.FIAT_CURRENCIES || 'usd,eur' }}
+          COINGECKO_MAX_IDS_PER_REQUEST: ${{ vars.COINGECKO_MAX_IDS_PER_REQUEST || secrets.COINGECKO_MAX_IDS_PER_REQUEST || '20' }}
+          COINGECKO_BATCH_DELAY_MS: ${{ vars.COINGECKO_BATCH_DELAY_MS || secrets.COINGECKO_BATCH_DELAY_MS || '1000' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
