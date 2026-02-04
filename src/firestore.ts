@@ -1,4 +1,4 @@
-import admin from 'firebase-admin';
+import admin = require('firebase-admin');
 
 export async function initFirestore() {
   if (admin.apps.length > 0) return;

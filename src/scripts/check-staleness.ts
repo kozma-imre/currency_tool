@@ -1,4 +1,4 @@
-import admin from 'firebase-admin';
+import admin = require('firebase-admin');
 import { initFirestore } from '../firestore';
 import { sendTelegramAlert } from '../notify/telegram';
 
@@ -13,7 +13,7 @@ export async function checkStaleness(db?: FirebaseFirestore.Firestore, staleAfte
   }
 
   const collectionName = process.env.EXCHANGE_RATES_COLLECTION_TEST ?? process.env.EXCHANGE_RATES_COLLECTION ?? 'exchange_rates';
-  const latestRef = db.collection(collectionName).doc('latest');
+  const latestRef = db!.collection(collectionName).doc('latest');
   const snap = await latestRef.get();
   if (!snap.exists) {
     return { ok: true, stale: false, reason: 'no-latest' };
@@ -30,7 +30,7 @@ export async function checkStaleness(db?: FirebaseFirestore.Firestore, staleAfte
     const mcol = process.env.MONITORING_COLLECTION ?? 'monitoring';
 
     // Write an event for aggregation
-    await db.collection(mcol).add({
+    await db!.collection(mcol).add({
       type: 'staleness',
       provider: data.provider,
       lastUpdated: ts,
@@ -42,7 +42,7 @@ export async function checkStaleness(db?: FirebaseFirestore.Firestore, staleAfte
     // Alert aggregation & debouncing
     const alertsCol = process.env.MONITORING_ALERTS_COLLECTION ?? `${mcol}_alerts`;
     const alertId = `staleness-${data.provider ?? 'unknown'}`;
-    const alertRef = db.collection(alertsCol).doc(alertId);
+    const alertRef = db!.collection(alertsCol).doc(alertId);
 
     const alertDoc = await alertRef.get();
     const now = new Date();
@@ -91,7 +91,7 @@ export async function checkStaleness(db?: FirebaseFirestore.Firestore, staleAfte
     await alertRef.set(state, { merge: true });
     if (sent) {
       // also write a monitoring log for alert send if desired
-      await db.collection(mcol).add({ type: 'alert_sent', alertId, provider: data.provider, sentAt: new Date().toISOString(), via: 'telegram' });
+      await db!.collection(mcol).add({ type: 'alert_sent', alertId, provider: data.provider, sentAt: new Date().toISOString(), via: 'telegram' });
     }
   }
 

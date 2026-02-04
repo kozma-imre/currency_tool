@@ -1,4 +1,4 @@
-import admin from 'firebase-admin';
+import admin = require('firebase-admin');
 import { initFirestore } from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
 

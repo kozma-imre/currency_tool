@@ -1,4 +1,4 @@
-import admin from 'firebase-admin';
+import admin = require('firebase-admin');
 import { initFirestore } from '../firestore';
 
 export async function cleanupSnapshots(db?: FirebaseFirestore.Firestore, retentionDays = 30, dryRun = false) {
@@ -17,7 +17,7 @@ export async function cleanupSnapshots(db?: FirebaseFirestore.Firestore, retenti
   // Use the configured collection name from firestore module (safer and explicit)
   const { getCollectionName } = require('../firestore');
   const collectionName = getCollectionName();
-  const col = db.collection(collectionName);
+  const col = db!.collection(collectionName);
   const snap = await col.get();
 
   let deleted = 0;

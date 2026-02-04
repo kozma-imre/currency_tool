@@ -1,5 +1,5 @@
 import axios from 'axios';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { initFirestore, writeLatest, writeSnapshot, writeMonitoringLog } from './firestore';
 import type { RatesResult } from './types';
 
