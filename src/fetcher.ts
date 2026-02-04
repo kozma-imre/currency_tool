@@ -139,8 +139,27 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
           }
         }, 2);
       } catch (err: any) {
-        // If a batch fails even after retries, log and continue with partial results
-        console.warn('CoinGecko batch failed for ids', batch, 'error:', err?.message || err);
+        // If a batch fails even after retries, attempt to isolate invalid ids if we see a 400
+        if (err?.response?.status === 400) {
+          console.warn('CoinGecko batch returned 400; isolating invalid ids in batch', batch);
+          try {
+            const { validData, invalidIds } = await isolateInvalidIds(batch, vsCurrencies, headers);
+            // Merge back any valid per-id data
+            Object.assign(out, validData);
+            if (invalidIds.length) {
+              console.warn('Dropping unsupported/invalid CoinGecko ids:', invalidIds);
+              try {
+                await sendTelegramAlert(`Dropped unsupported CoinGecko ids during fetch: ${invalidIds.join(', ')}`);
+              } catch (e) {
+                // ignore telegram failures
+              }
+            }
+          } catch (innerErr: any) {
+            console.warn('Error during batch isolation for CoinGecko', innerErr?.message || innerErr);
+          }
+        } else {
+          console.warn('CoinGecko batch failed for ids', batch, 'error:', err?.message || err);
+        }
       }
 
       // small delay between batches to avoid bursts
@@ -187,6 +206,42 @@ async function fetchCryptoFromCoinCap(cryptoIds: string[]) {
     out[symbol] = { usd: priceUsd, eur: undefined };
   }
   return { provider: 'coincap', data: out, headers: res.headers };
+}
+
+// Helper: isolate invalid ids when a batch returns 400 by checking ids individually
+async function isolateInvalidIds(batch: string[], vsCurrencies: string[], headers: Record<string, string>) {
+  const validData: Record<string, any> = {};
+  const invalidIds: string[] = [];
+  for (const id of batch) {
+    const params = { ids: id, vs_currencies: vsCurrencies.join(',') };
+    const config: any = { params, timeout: 10000 };
+    if (headers && Object.keys(headers).length) config.headers = headers;
+    try {
+      const res = await retry(() => axios.get(COINGECKO_URL, config), 1);
+      if (res && res.data) Object.assign(validData, res.data);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 400) {
+        invalidIds.push(id);
+      } else if (status === 429) {
+        // If we hit rate limit while isolating, respect Retry-After then retry once
+        const rh = err?.response?.headers?.['retry-after'];
+        const waitSec = Number(rh) || 1;
+        await sleep(waitSec * 1000 + 250);
+        try {
+          const res = await axios.get(COINGECKO_URL, config);
+          if (res && res.data) Object.assign(validData, res.data);
+        } catch (err2: any) {
+          // if still failing, mark as missing (do not treat as invalid)
+          console.warn('Isolation request failed for id', id, 'error:', err2?.message || err2);
+        }
+      } else {
+        // Other errors - log and continue (mark as missing)
+        console.warn('Isolation request failed for id', id, 'error:', err?.message || err);
+      }
+    }
+  }
+  return { validData, invalidIds };
 }
 
 async function fetchFiat() {
