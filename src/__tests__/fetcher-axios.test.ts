@@ -34,6 +34,39 @@ describe('fetcher with mocked axios', () => {
     expect(firestore.writeSnapshot).toHaveBeenCalled();
   });
 
+  it('expands additional fiat currencies using ECB when CoinGecko only returns USD/EUR', async () => {
+    process.env.FIAT_CURRENCIES = 'usd,eur,ron,huf';
+    mockedAxios.get.mockImplementation((url, config) => {
+      if (url === 'https://api.coingecko.com/api/v3/simple/price') {
+        // ensure CoinGecko only requested usd,eur
+        expect(config?.params?.vs_currencies).toBe('usd,eur');
+        return Promise.resolve({ data: { bitcoin: { usd: 50000, eur: 46000 }, ethereum: { usd: 2000, eur: 1800 } } });
+      }
+      if (url === 'https://api.exchangerate.host/latest') {
+        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08, RON: 4.9, HUF: 400 } } });
+      }
+      return Promise.reject(new Error('unknown url'));
+    });
+
+    const payload = await fetchAndStoreRates();
+
+    expect(payload).toHaveProperty('rates');
+    expect(payload.rates).toHaveProperty('BTC');
+    // original values
+    expect(payload.rates.BTC).toHaveProperty('usd', 50000);
+    expect(payload.rates.BTC).toHaveProperty('eur', 46000);
+    // ensure BTC entry exists before checking derived values
+    expect(payload.rates.BTC).toBeDefined();
+    // derived values: ron = usd * (RON/USD) = 50000 * (4.9 / 1.08)
+    const expectedRon = 50000 * (4.9 / 1.08);
+    expect(payload.rates.BTC!.ron).toBeCloseTo(expectedRon, 4);
+    const expectedHuf = 50000 * (400 / 1.08);
+    expect(payload.rates.BTC!.huf).toBeCloseTo(expectedHuf, 4);
+
+    // cleanup
+    delete process.env.FIAT_CURRENCIES;
+  });
+
   it('retries on failure and succeeds', async () => {
     let first = true;
     mockedAxios.get.mockImplementation((url) => {

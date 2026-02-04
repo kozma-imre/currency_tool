@@ -83,13 +83,19 @@ export async function fetchAndStoreRates() {
   // Read configured cryptos / fiats from env (defaults)
   const configuredIds = (process.env.CRYPTO_IDS ?? 'bitcoin,ethereum').split(',').map(s => s.trim()).filter(Boolean);
   const fiatCurrencies = (process.env.FIAT_CURRENCIES ?? 'usd,eur').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  // For CoinGecko we only request common fiat bases (usd, eur) to avoid unsupported fiats; ECB will be used to expand others
+  const coinGeckoFiats = fiatCurrencies.filter(f => ['usd', 'eur'].includes(f));
+  if (!coinGeckoFiats.length) {
+    coinGeckoFiats.push('usd', 'eur'); // ensure at least USD/EUR
+  }
+
   // Binance symbols: explicit override or derive from COINGECKO_MAP or uppercase ids
   const configuredSymbols = (process.env.CRYPTO_SYMBOLS && process.env.CRYPTO_SYMBOLS.split(',').map(s => s.trim()).filter(Boolean)) || configuredIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
 
   let provider = 'coingecko';
   let cryptoResult: any;
   try {
-    cryptoResult = await retry(() => fetchCryptoFromCoingecko(configuredIds, fiatCurrencies), 2);
+    cryptoResult = await retry(() => fetchCryptoFromCoingecko(configuredIds, coinGeckoFiats), 2);
   } catch (err) {
     console.warn('CoinGecko fetch failed, trying Binance fallback', err);
     try {
@@ -105,16 +111,70 @@ export async function fetchAndStoreRates() {
   const fiat = await retry(fetchFiat, 2);
 
   const rates: RatesResult = {};
-  // Normalize: if coinGecko-style (ids), map; if binance-style already mapped, use as-is
+  // Normalize raw provider result into symbol -> { usd?, eur? }
   if (cryptoResult.provider === 'coingecko') {
     for (const [id, vals] of Object.entries(cryptoResult.data)) {
       const symbol = COINGECKO_MAP[id] ?? id.toUpperCase();
-      rates[symbol] = vals as any;
+      rates[symbol] = vals as any; // e.g. { usd: 123, eur: 110 }
     }
   } else {
     for (const [symbol, vals] of Object.entries(cryptoResult.data)) {
-      rates[symbol] = vals as any;
+      rates[symbol] = vals as any; // binance returns { usd: price, eur: undefined }
     }
+  }
+
+  // Expand rates to include all requested fiatCurrencies using ECB conversions if necessary
+  const ecbRates: Record<string, number> = (fiat && fiat.rates) ? fiat.rates : {};
+  const ecbBase = (fiat && fiat.base) ? fiat.base.toUpperCase() : 'EUR';
+
+  function convertUsingEcb(value: number | undefined, from: string | undefined, to: string): number | undefined {
+    if (value == null || !from) return undefined;
+    const upperTo = to.toUpperCase();
+    const upperFrom = from.toUpperCase();
+    // If ECB base is same as 'from' or 'to', compute relative
+    // ECB provides rates as: rate[X] = X per 1 EUR (if base EUR), so conversion factor from 'from' to 'to' is rate[to]/rate[from]
+    const rateTo = ecbRates[upperTo];
+    const rateFrom = ecbRates[upperFrom];
+    if (rateTo == null || rateFrom == null) return undefined;
+    return value * (rateTo / rateFrom);
+  }
+
+  // For each symbol, for each requested fiat, fill missing values by converting from usd or eur
+  for (const [sym, vals] of Object.entries(rates)) {
+    const target: Record<string, any> = {};
+    // copy existing known lowercase keys
+    const existingLower: Record<string, number> = {};
+    for (const [k, v] of Object.entries(vals as any)) {
+      existingLower[String(k).toLowerCase()] = v as number;
+    }
+    // Try to ensure usd and eur exist by using what is available
+    for (const base of ['usd', 'eur']) {
+      if (existingLower[base] == null) {
+        // try to derive from the other if possible using ECB
+        const other = base === 'usd' ? 'eur' : 'usd';
+        if (existingLower[other] != null) {
+          const conv = convertUsingEcb(existingLower[other], other, base);
+          if (conv != null) existingLower[base] = conv;
+        }
+      }
+    }
+    // For every requested fiat currency, compute final value
+    for (const fiatTarget of fiatCurrencies) {
+      if (existingLower[fiatTarget] != null) {
+        target[fiatTarget] = existingLower[fiatTarget];
+        continue;
+      }
+      // Prefer converting from USD then EUR
+      let computed: number | undefined = undefined;
+      if (existingLower['usd'] != null) {
+        computed = convertUsingEcb(existingLower['usd'], 'USD', fiatTarget);
+      }
+      if (computed == null && existingLower['eur'] != null) {
+        computed = convertUsingEcb(existingLower['eur'], 'EUR', fiatTarget);
+      }
+      if (computed != null) target[fiatTarget] = Number(computed);
+    }
+    rates[sym] = target as any;
   }
 
   const headersObj = (cryptoResult.headers && typeof (cryptoResult.headers as any).toJSON === 'function')
