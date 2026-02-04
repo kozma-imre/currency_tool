@@ -34,3 +34,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
         run: npm run fetch
+
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ALERTING_ENABLED: ${{ vars.TELEGRAM_ALERTING_ENABLED || 'false' }}
+        run: |
+          if [ "${TELEGRAM_ALERTING_ENABLED}" != "true" ]; then
+            echo "Telegram alerting disabled; skipping.";
+            exit 0;
+          fi
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Missing Telegram credentials; skipping.";
+            exit 0;
+          fi
+          TEXT="⚠️ Workflow '${{ github.workflow }}' failed in repo '${{ github.repository }}' (run #${{ github.run_number }})\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" --data-urlencode "text=${TEXT}" >/dev/null || echo "Telegram send failed"
