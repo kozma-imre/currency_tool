@@ -16,6 +16,9 @@ describe('fetcher fallback behavior', () => {
   it('uses Binance fallback when CoinGecko fails', async () => {
     let called = 0;
     mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+      if (typeof url === 'string' && url.includes('coins/list')) {
+        return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }] });
+      }
       if (typeof url === 'string' && url.includes('coingecko')) {
         called++;
         return Promise.reject(new Error('coingecko down'));

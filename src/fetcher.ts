@@ -1,11 +1,80 @@
 import axios from 'axios';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { initFirestore, writeLatest, writeSnapshot, writeMonitoringLog } from './firestore';
 import type { RatesResult } from './types';
 
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
+const COINGECKO_LIST_URL = 'https://api.coingecko.com/api/v3/coins/list';
+const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
 const ECB_URL = 'https://api.exchangerate.host/latest';
 const BINANCE_URL = 'https://api.binance.com/api/v3/ticker/price';
+
+const COINGECKO_COINS_CACHE_TTL = Number(process.env.COINGECKO_COINS_CACHE_TTL) || 24 * 60 * 60; // seconds
+const COINGECKO_COINS_CACHE_FILE = path.join(os.tmpdir(), 'coingecko-coins.json');
+
+async function fetchSupportedCoinIds(): Promise<Set<string>> {
+  // During tests, skip cache to avoid inter-test file pollution and always hit the mocked endpoint
+  if (process.env.NODE_ENV === 'test') {
+    const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
+    const data = res.data;
+    return new Set((data || []).map((c: any) => c.id));
+  }
+
+  try {
+    if (fs.existsSync(COINGECKO_COINS_CACHE_FILE)) {
+      const raw = fs.readFileSync(COINGECKO_COINS_CACHE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.ts && (Date.now() - parsed.ts) < COINGECKO_COINS_CACHE_TTL * 1000) {
+        return new Set((parsed.data || []).map((c: any) => c.id));
+      }
+    }
+  } catch (e) {
+    // ignore cache read errors
+  }
+  const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
+  const data = res.data;
+  try {
+    fs.writeFileSync(COINGECKO_COINS_CACHE_FILE, JSON.stringify({ ts: Date.now(), data }), 'utf8');
+  } catch (e) {
+    // ignore cache write errors
+  }
+  return new Set((data || []).map((c: any) => c.id));
+}
+
+async function fetchTopCoinIds(n = 100): Promise<Set<string>> {
+  // Fetch top-N coins by market cap using /coins/markets and cache per-n
+  const cacheFile = path.join(os.tmpdir(), `coingecko-top-${n}.json`);
+  const ttl = COINGECKO_COINS_CACHE_TTL;
+  if (process.env.NODE_ENV === 'test') {
+    const res = await retry(() => axios.get(COINGECKO_MARKETS_URL, { timeout: 10000, params: { vs_currency: 'usd', order: 'market_cap_desc', per_page: n, page: 1, sparkline: false } }), 2);
+    const data = res.data;
+    return new Set((data || []).map((c: any) => c.id));
+  }
+
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const raw = fs.readFileSync(cacheFile, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.ts && (Date.now() - parsed.ts) < ttl * 1000) {
+        return new Set((parsed.data || []).map((c: any) => c.id));
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  const res = await retry(() => axios.get(COINGECKO_MARKETS_URL, { timeout: 10000, params: { vs_currency: 'usd', order: 'market_cap_desc', per_page: n, page: 1, sparkline: false } }), 2);
+  const data = res.data;
+  try {
+    fs.writeFileSync(cacheFile, JSON.stringify({ ts: Date.now(), data }), 'utf8');
+  } catch (e) {
+    // ignore
+  }
+  return new Set((data || []).map((c: any) => c.id));
+}
 
 const COINGECKO_MAP: Record<string, string> = { bitcoin: 'BTC', ethereum: 'ETH' };
 const BINANCE_MAP: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH' };
@@ -81,8 +150,20 @@ export async function fetchAndStoreRates() {
   const start = Date.now();
 
   // Read configured cryptos / fiats from env (defaults)
-  const configuredIds = (process.env.CRYPTO_IDS ?? 'bitcoin,ethereum').split(',').map(s => s.trim()).filter(Boolean);
+  const rawConfigured = (process.env.CRYPTO_IDS ?? 'bitcoin,ethereum').trim();
   const fiatCurrencies = (process.env.FIAT_CURRENCIES ?? 'usd,eur').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+  // Support top-N via `CRYPTO_IDS=top:100` or env `CRYPTO_USE_TOP_N=100`
+  let configuredIds: string[] = [];
+  const topMatch = /^top:(\d+)$/i.exec(rawConfigured);
+  const topEnvN = process.env.CRYPTO_USE_TOP_N ? Number(process.env.CRYPTO_USE_TOP_N) : undefined;
+  if (topMatch || topEnvN) {
+    const n = topMatch ? Number(topMatch[1]) : (topEnvN || 100);
+    const topSet = await fetchTopCoinIds(n);
+    configuredIds = Array.from(topSet);
+  } else {
+    configuredIds = rawConfigured.split(',').map(s => s.trim()).filter(Boolean);
+  }
   // For CoinGecko we only request common fiat bases (usd, eur) to avoid unsupported fiats; ECB will be used to expand others
   const coinGeckoFiats = fiatCurrencies.filter(f => ['usd', 'eur'].includes(f));
   if (!coinGeckoFiats.length) {
@@ -94,10 +175,13 @@ export async function fetchAndStoreRates() {
 
   let provider = 'coingecko';
   let cryptoResult: any;
-  try {
-    cryptoResult = await retry(() => fetchCryptoFromCoingecko(configuredIds, coinGeckoFiats), 2);
-  } catch (err) {
-    console.warn('CoinGecko fetch failed, trying Binance fallback', err);
+
+  // Validate configured CRYPTO_IDS against CoinGecko /coins/list
+  const supportedIds = await fetchSupportedCoinIds();
+  const filteredIds = configuredIds.filter(id => supportedIds.has(id));
+
+  if (filteredIds.length === 0) {
+    console.warn('No configured CRYPTO_IDS are supported by CoinGecko; skipping CoinGecko and using Binance fallback.');
     try {
       cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
       provider = 'binance';
@@ -105,6 +189,24 @@ export async function fetchAndStoreRates() {
       const durationMs = Date.now() - start;
       await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
       throw err2;
+    }
+  } else {
+    if (filteredIds.length < configuredIds.length) {
+      const dropped = configuredIds.filter(id => !supportedIds.has(id));
+      console.warn('Dropping unsupported CoinGecko ids:', dropped);
+    }
+    try {
+      cryptoResult = await retry(() => fetchCryptoFromCoingecko(filteredIds, coinGeckoFiats), 2);
+    } catch (err) {
+      console.warn('CoinGecko fetch failed, trying Binance fallback', err);
+      try {
+        cryptoResult = await retry(() => fetchCryptoFromBinance(configuredSymbols), 2);
+        provider = 'binance';
+      } catch (err2) {
+        const durationMs = Date.now() - start;
+        await writeMonitoringLog({ runId, provider: 'coingecko', operation: 'fetch', durationMs, status: 'error', error: String(err2), timestamp: new Date().toISOString() });
+        throw err2;
+      }
     }
   }
 

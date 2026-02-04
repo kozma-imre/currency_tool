@@ -21,6 +21,9 @@ describe('latest vs snapshot storage', () => {
     };
 
     mockedAxios.get.mockImplementation((url: any) => {
+      if (typeof url === 'string' && url.includes('coins/list')) {
+        return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }, { id: 'ethereum', symbol: 'eth', name: 'Ethereum' }] });
+      }
       if (typeof url === 'string' && url.includes('coingecko')) {
         return Promise.resolve({ data: { bitcoin: { usd: 76038, eur: 64340 }, ethereum: { usd: 2253.76, eur: 1907.03 } }, headers });
       }
