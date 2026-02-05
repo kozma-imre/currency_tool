@@ -12,14 +12,28 @@ jobs:
     environment: Prod
     strategy:
       matrix:
-        node-version: [18]
+        node-version: [18, 20]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: 'npm'
       - name: Install dependencies
         run: npm ci
-      - name: Run tests
-        run: npm test -- --runInBand
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Run tests & coverage
+        run: npm run test:coverage -- --runInBand
+      - name: Upload coverage to artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          # make artifact name unique per matrix job to avoid 409 Conflict
+          name: coverage-report-${{ matrix.node-version }}
+          path: coverage

@@ -1,7 +1,6 @@
 // Use Node fs/os directly at runtime to avoid jest module mock issues
 let fs: any;
 const os = require('os');
-const path = require('path');
 
 const sampleWorkflow = `name: fetch-exchange-rates
 on:

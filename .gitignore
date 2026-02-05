@@ -26,3 +26,4 @@ service-account*.json
 *.pem
 
 .github/copilot-instructions.md
+.github/instructions/*

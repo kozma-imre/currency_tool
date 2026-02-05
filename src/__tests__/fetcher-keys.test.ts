@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as firestore from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
+import { isHost } from './url-helpers';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -20,14 +21,14 @@ describe('provider API key behavior', () => {
   it('sends CoinGecko API key header when COINGECKO_API_KEY is set', async () => {
     process.env.COINGECKO_API_KEY = 'test-cg-key';
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }, { id: 'ethereum', symbol: 'eth', name: 'Ethereum' }] });
       }
       if (typeof url === 'string' && url.includes('coingecko')) {
-        expect(opts).toBeDefined();
-        expect(opts.headers).toBeDefined();
-        expect(opts.headers['X-CG-PRO-API-KEY']).toBe('test-cg-key');
+        expect(_opts).toBeDefined();
+        expect(_opts.headers).toBeDefined();
+        expect(_opts.headers['X-CG-PRO-API-KEY']).toBe('test-cg-key');
         return Promise.resolve({ data: { bitcoin: { usd: 50000 }, ethereum: { usd: 2000 } }, headers: { 'x-test': 'ok' } });
       }
       if (typeof url === 'string' && url.includes('eurofxref')) {
@@ -45,14 +46,14 @@ describe('provider API key behavior', () => {
   it('falls back to CoinPaprika when CoinGecko fails', async () => {
     process.env.BINANCE_KEY = 'test-binance-key';
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }] });
       }
       if (typeof url === 'string' && url.includes('coingecko')) {
         return Promise.reject(new Error('coingecko down'));
       }
-      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.coinpaprika.com')) {
         if (url.includes('/search')) {
           return Promise.resolve({ data: { coins: [{ id: 'btc-bitcoin', symbol: 'BTC' }] } });
         }

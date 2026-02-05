@@ -1,5 +1,4 @@
 import axios from 'axios';
-import * as fs from 'fs';
 import { fetchAndStoreRates } from '../fetcher';
 
 jest.mock('axios');
