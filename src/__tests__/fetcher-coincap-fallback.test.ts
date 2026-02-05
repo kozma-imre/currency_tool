@@ -29,9 +29,16 @@ describe('fetcher CoinCap fallback', () => {
         e.response = { status: 451 };
         return Promise.reject(e);
       }
-      if (typeof url === 'string' && url.includes('coincap.io')) {
-        // CoinCap returns data for both assets
-        return Promise.resolve({ data: { data: [{ id: 'bitcoin', priceUsd: '50000' }, { id: 'ethereum', priceUsd: '2500' }] }, headers: {} });
+      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+        // simulate CoinPaprika search + tickers sequence
+        if (url.includes('/search')) {
+          return Promise.resolve({ data: { coins: [{ id: 'btc-bitcoin', symbol: 'BTC' }, { id: 'eth-ethereum', symbol: 'ETH' }] } });
+        }
+        if (url.includes('/tickers')) {
+          // return ticker with quotes
+          const symbol = url.includes('btc-bitcoin') ? 'BTC' : 'ETH';
+          return Promise.resolve({ data: { id: symbol === 'BTC' ? 'btc-bitcoin' : 'eth-ethereum', quotes: { USD: { price: symbol === 'BTC' ? 50000 : 2500 } } }, headers: {} });
+        }
       }
       if (typeof url === 'string' && url.includes('exchangerate.host')) {
         return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
@@ -40,7 +47,7 @@ describe('fetcher CoinCap fallback', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.provider).toBe('coincap');
+    expect(payload.provider).toBe('coinpaprika');
     expect(payload.rates.BTC!.usd).toBe(50000);
     expect(payload.rates.ETH!.usd).toBe(2500);
   });
@@ -61,9 +68,14 @@ describe('fetcher CoinCap fallback', () => {
         e.response = { status: 451 };
         return Promise.reject(e);
       }
-      if (typeof url === 'string' && url.includes('coincap.io')) {
-        // CoinCap returns ethereum
-        return Promise.resolve({ data: { data: [{ id: 'ethereum', priceUsd: '2500' }] }, headers: {} });
+      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+        if (url.includes('/search')) {
+          // return mapping for ETH
+          return Promise.resolve({ data: { coins: [{ id: 'eth-ethereum', symbol: 'ETH' }] } });
+        }
+        if (url.includes('/tickers')) {
+          return Promise.resolve({ data: { id: 'eth-ethereum', quotes: { USD: { price: 2500 } } }, headers: {} });
+        }
       }
       if (typeof url === 'string' && url.includes('exchangerate.host')) {
         return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
@@ -72,7 +84,7 @@ describe('fetcher CoinCap fallback', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.provider).toBe('coingecko+coincap');
+    expect(payload.provider).toBe('coingecko+coinpaprika');
     expect(payload.rates.BTC!.usd).toBe(50000);
     expect(payload.rates.ETH!.usd).toBe(2500);
     expect(tgSpy).not.toHaveBeenCalled(); // no need to send alert when CoinCap succeeded

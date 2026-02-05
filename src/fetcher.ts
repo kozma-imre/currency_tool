@@ -191,21 +191,34 @@ async function fetchCryptoFromBinance(symbols: string[]) {
   return { provider: 'binance', data: out, headers: {} };
 }
 
-// CoinCap is a free public API that does not require registration for basic asset prices
-async function fetchCryptoFromCoinCap(cryptoIds: string[]) {
-  // CoinCap supports comma-separated ids via /v2/assets?ids=
+// CoinPaprika is a public API we use as a fallback. We search by symbol then fetch tickers.
+async function fetchCryptoFromCoinPaprika(symbols: string[]) {
   const out: Record<string, any> = {};
-  if (!cryptoIds || cryptoIds.length === 0) return { provider: 'coincap', data: out, headers: {} };
-  const params = { ids: cryptoIds.join(',') };
-  const res = await axios.get('https://api.coincap.io/v2/assets', { params, timeout: 10000 });
-  const data = res.data && res.data.data ? res.data.data : [];
-  for (const item of data) {
-    const id = String(item.id);
-    const priceUsd = Number(item.priceUsd);
-    const symbol = COINGECKO_MAP[id] ?? id.toUpperCase();
-    out[symbol] = { usd: priceUsd, eur: undefined };
+  if (!symbols || symbols.length === 0) return { provider: 'coinpaprika', data: out, headers: {} };
+  for (const symbol of symbols) {
+    try {
+      // search for coin by symbol
+      const searchRes = await axios.get('https://api.coinpaprika.com/v1/search', { params: { query: symbol, limit: 5, type: 'coins' }, timeout: 10000 });
+      const results = searchRes.data && searchRes.data.coins ? searchRes.data.coins : searchRes.data || [];
+      let coinEntry: any = null;
+      if (Array.isArray(results)) {
+        coinEntry = results.find((r: any) => String(r.symbol).toUpperCase() === String(symbol).toUpperCase()) || results[0];
+      }
+      if (!coinEntry || !coinEntry.id) {
+        // unable to find mapping for this symbol
+        continue;
+      }
+      const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${coinEntry.id}`, { timeout: 10000 });
+      const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+      const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+      const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+      out[String(symbol).toUpperCase()] = { usd, eur };
+    } catch (err: any) {
+      console.warn('CoinPaprika request failed for symbol', symbol, 'error:', err?.message || err);
+      // continue with other symbols
+    }
   }
-  return { provider: 'coincap', data: out, headers: res.headers };
+  return { provider: 'coinpaprika', data: out, headers: {} };
 }
 
 // Helper: isolate invalid ids when a batch returns 400 by checking ids individually
@@ -346,16 +359,20 @@ export async function fetchAndStoreRates() {
           // If Binance is geo-blocked (451), try CoinCap as an alternative public fallback
           const status = err2?.response?.status;
           if (status === 451) {
-            console.warn('Binance returned 451 (restricted location). Trying CoinCap fallback for missing symbols.');
+            console.warn('Binance returned 451 (restricted location). Trying CoinPaprika fallback for missing symbols.');
             try {
-              const ccRes = await retry(() => fetchCryptoFromCoinCap(missingIds), 1);
-              // merge CoinCap results
-              cryptoResult.data = { ...(cryptoResult.data || {}), ...(ccRes.data || {}) };
-              provider = 'coingecko+coincap';
+              const ccRes = await retry(() => fetchCryptoFromCoinPaprika(missingSymbols), 1);
+              if (ccRes && ccRes.data && Object.keys(ccRes.data).length > 0) {
+                // merge CoinPaprika results
+                cryptoResult.data = { ...(cryptoResult.data || {}), ...(ccRes.data || {}) };
+                provider = 'coingecko+coinpaprika';
+              } else {
+                throw new Error('CoinPaprika returned no data');
+              }
             } catch (ccErr: any) {
-              console.warn('CoinCap fallback failed', ccErr?.message || ccErr);
+              console.warn('CoinPaprika fallback failed', ccErr?.message || ccErr);
               try {
-                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinCap fallback failed for missing symbols: ${missingSymbols.join(', ')}. Proceeding with partial CoinGecko data.`);
+                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinPaprika fallback failed for missing symbols: ${missingSymbols.join(', ')}. Proceeding with partial CoinGecko data.`);
               } catch (e) {
                 // ignore alert failures
               }
@@ -378,16 +395,21 @@ export async function fetchAndStoreRates() {
         const status = err2?.response?.status;
         const partialCount = cryptoResult && cryptoResult.data ? Object.keys(cryptoResult.data).length : 0;
         if (status === 451) {
-          console.warn('Binance returned 451 on full fallback; attempting CoinCap as a public fallback.');
+          console.warn('Binance returned 451 on full fallback; attempting CoinPaprika as a public fallback.');
           try {
-            const ccRes = await retry(() => fetchCryptoFromCoinCap(filteredIds.length ? filteredIds : configuredIds), 1);
-            cryptoResult = ccRes;
-            provider = 'coincap';
+            const symbolsForFallback = (filteredIds.length ? filteredIds : configuredIds).map((id: string) => COINGECKO_MAP[id] ?? id.toUpperCase());
+            const ccRes = await retry(() => fetchCryptoFromCoinPaprika(symbolsForFallback), 1);
+            if (ccRes && ccRes.data && Object.keys(ccRes.data).length > 0) {
+              cryptoResult = ccRes;
+              provider = 'coinpaprika';
+            } else {
+              throw new Error('CoinPaprika returned no data');
+            }
           } catch (ccErr: any) {
-            console.warn('CoinCap fallback failed', ccErr?.message || ccErr);
+            console.warn('CoinPaprika fallback failed', ccErr?.message || ccErr);
             if (partialCount > 0) {
               try {
-                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinCap fallback failed. Proceeding with partial CoinGecko data.`);
+                await sendTelegramAlert(`Binance returned 451 (restricted location) and CoinPaprika fallback failed. Proceeding with partial CoinGecko data.`);
               } catch (e) {
                 // ignore alert failures
               }
