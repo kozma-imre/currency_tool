@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as notify from '../notify/telegram';
 import * as firestore from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
+import { isHost } from './url-helpers';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -24,7 +25,7 @@ describe('fetcher CoinCap fallback', () => {
         // simulate a full failure
         return Promise.reject(new Error('coingecko down'));
       }
-      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.coinpaprika.com')) {
         // simulate CoinPaprika search + tickers sequence
         if (url.includes('/search')) {
           return Promise.resolve({ data: { coins: [{ id: 'btc-bitcoin', symbol: 'BTC' }, { id: 'eth-ethereum', symbol: 'ETH' }] } });

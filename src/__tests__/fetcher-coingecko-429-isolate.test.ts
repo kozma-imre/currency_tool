@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as notify from '../notify/telegram';
 import * as firestore from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
+import { isHost } from './url-helpers';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -65,7 +66,7 @@ describe('CoinGecko 429 isolation', () => {
         return Promise.reject(e);
       }
 
-      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.coinpaprika.com')) {
         // Simulate CoinPaprika providing ALGORAND fallback
         if (url.includes('/search') && _opts && _opts.params && String(_opts.params.query).toUpperCase() === 'ALGORAND') {
           return Promise.resolve({ data: { coins: [{ id: 'alg-algorand', symbol: 'ALGORAND' }] } });

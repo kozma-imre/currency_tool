@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as notify from '../notify/telegram';
 import * as firestore from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
+import { isHost } from './url-helpers';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -34,7 +35,7 @@ describe('fetcher no crypto fallback', () => {
         e.response = { status: 451 };
         return Promise.reject(e);
       }
-      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.coinpaprika.com')) {
         // return no candidates
         if (url.includes('/search')) {
           return Promise.resolve({ data: { coins: [] } });

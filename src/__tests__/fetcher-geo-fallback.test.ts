@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as notify from '../notify/telegram';
 import * as firestore from '../firestore';
 import { fetchAndStoreRates } from '../fetcher';
+import { isHost } from './url-helpers';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -29,7 +30,7 @@ describe('fetcher geo-block fallback', () => {
         // only return bitcoin price, simulate failure for other batch(s)
         return Promise.resolve({ data: { bitcoin: { usd: 50000 } }, headers: { etag: 'W/"abcd"' } });
       }
-      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.coinpaprika.com')) {
         // Simulate CoinPaprika failing so we proceed with partial CoinGecko data
         const e: any = new Error('paprika-fail');
         return Promise.reject(e);
