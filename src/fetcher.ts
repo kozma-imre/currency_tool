@@ -328,7 +328,7 @@ export async function fetchAndStoreRates() {
   // and alert so the operator knows something went wrong while still preserving fiat writes.
   if (!Object.keys(rates).length) {
     console.warn('No crypto rates available after fallbacks; marking provider as none and sending alert');
-    provider = 'none';
+    provider = PROVIDER_NONE;
     try {
       const detail = `No crypto rates were fetched for configured symbols; only fiat rates written to Firestore.`;
       // Append diagnostics to the alert for operator visibility
