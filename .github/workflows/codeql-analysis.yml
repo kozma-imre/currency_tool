@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: typescript
 
@@ -38,7 +38,7 @@ jobs:
       # does not have for forks). This avoids the "Resource not accessible by integration" error.
       - name: Perform CodeQL analysis and upload SARIF
         if: ${{ github.event_name != 'pull_request' || (github.event.pull_request && github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3
         with:
           output: results/javascript.sarif
 

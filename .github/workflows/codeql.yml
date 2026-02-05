@@ -22,12 +22,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: javascript
       - name: Perform CodeQL Analysis
         if: ${{ github.event_name != 'pull_request' || (github.event.pull_request && github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3
 
       - name: Note skipped CodeQL upload on fork
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository }}
