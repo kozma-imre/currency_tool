@@ -34,5 +34,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          # make artifact name unique per matrix job to avoid 409 Conflict
+          name: coverage-report-${{ matrix.node-version }}
           path: coverage
