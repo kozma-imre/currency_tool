@@ -6,6 +6,7 @@ import * as path from 'path';
 import { initFirestore, writeLatest, writeSnapshot, writeMonitoringLog } from './firestore';
 import { sendTelegramAlert } from './notify/telegram';
 import type { RatesResult } from './types';
+import { PROVIDER_COINGECKO, PROVIDER_BINANCE, PROVIDER_COINPAPRIKA, PROVIDER_COINGECKO_BINANCE, PROVIDER_COINGECKO_COINPAPRIKA, PROVIDER_NONE } from './constants';
 
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
 const COINGECKO_LIST_URL = 'https://api.coingecko.com/api/v3/coins/list';
@@ -140,15 +141,19 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
             // rethrow so retry() wrapper can apply backoff
             throw err;
           }
-        }, 2);
+        }, 4); // more retries to be resilient to transient rate-limits
       } catch (err: any) {
-        // If a batch fails even after retries, attempt to isolate invalid ids if we see a 400
-        if (err?.response?.status === 400) {
-          console.warn('CoinGecko batch returned 400; isolating invalid ids in batch', batch);
+        // If a batch fails even after retries, attempt to isolate invalid ids if we see a 400 or a 429
+        const status = err?.response?.status;
+        if (status === 400 || status === 429) {
+          console.warn('CoinGecko batch returned', status, '; attempting per-id isolation for batch', batch);
           try {
             const { validData, invalidIds } = await isolateInvalidIds(batch, vsCurrencies, headers);
             // Merge back any valid per-id data
+            const prevCount = Object.keys(out || {}).length;
             Object.assign(out, validData);
+            const postCount = Object.keys(out || {}).length;
+            const added = postCount - prevCount;
             if (invalidIds.length) {
               console.warn('Dropping unsupported/invalid CoinGecko ids:', invalidIds);
               try {
@@ -156,6 +161,12 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
               } catch (e) {
                 // ignore telegram failures
               }
+            }
+            // If we recovered some ids via per-id isolation but still have missing ones, send a partial-data alert
+            if (added > 0 && invalidIds.length > 0) {
+              try {
+                await sendTelegramAlert(`CoinGecko returned partial results (recovered ${added} via per-id calls). Missing: ${invalidIds.join(', ')}`);
+              } catch (e) {}
             }
           } catch (innerErr: any) {
             console.warn('Error during batch isolation for CoinGecko', (innerErr as any).message || String(innerErr));
@@ -175,7 +186,7 @@ async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: strin
 
   // determine missing ids
   const missing: string[] = cryptoIds.filter(id => !(id in out));
-  return { provider: 'coingecko', data: out, headers: collectedHeaders, missing };
+  return { provider: PROVIDER_COINGECKO, data: out, headers: collectedHeaders, missing };
 }
 
 async function fetchCryptoFromBinance(symbols: string[]) {
@@ -191,14 +202,14 @@ async function fetchCryptoFromBinance(symbols: string[]) {
     const mapped = BINANCE_MAP[pair] ?? sym;
     out[mapped] = { usd: price, eur: undefined };
   }
-  return { provider: 'binance', data: out, headers: {} };
+  return { provider: PROVIDER_BINANCE, data: out, headers: {} };
 }
 
 // CoinPaprika is a public API we use as a fallback. We search by symbol then fetch tickers.
 // Improve robustness: try multiple search candidates and tolerate per-candidate failures
 async function fetchCryptoFromCoinPaprika(symbols: string[]) {
   const out: Record<string, any> = {};
-  if (!symbols || symbols.length === 0) return { provider: 'coinpaprika', data: out, headers: {} };
+  if (!symbols || symbols.length === 0) return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };
   for (const symbol of symbols) {
     try {
       // search for coin by symbol
@@ -263,7 +274,7 @@ async function fetchCryptoFromCoinPaprika(symbols: string[]) {
       // continue with other symbols
     }
   }
-  return { provider: 'coinpaprika', data: out, headers: {} };
+  return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };
 }
 
 // Helper: isolate invalid ids when a batch returns 400 by checking ids individually
@@ -375,7 +386,7 @@ export async function fetchAndStoreRates() {
   // Binance symbols: explicit override or derive from COINGECKO_MAP or uppercase ids
   const configuredSymbols = (process.env.CRYPTO_SYMBOLS && process.env.CRYPTO_SYMBOLS.split(',').map(s => s.trim()).filter(Boolean)) || configuredIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
 
-  let provider = 'coingecko';
+  let provider = PROVIDER_COINGECKO;
   let cryptoResult: any;
 
   // Validate configured CRYPTO_IDS against CoinGecko /coins/list
@@ -385,8 +396,8 @@ export async function fetchAndStoreRates() {
   if (filteredIds.length === 0) {
     console.warn('No configured CRYPTO_IDS are supported by CoinGecko; proceeding to CoinPaprika fallback or ECB-only.');
     // Ensure we have a safe default so later code that reads `cryptoResult` does not crash.
-    cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
-    provider = 'none';
+    cryptoResult = { provider: PROVIDER_NONE, data: {}, headers: {} } as any;
+    provider = PROVIDER_NONE;
   } else {
     if (filteredIds.length < configuredIds.length) {
       const dropped = configuredIds.filter(id => !supportedIds.has(id));
@@ -403,7 +414,7 @@ export async function fetchAndStoreRates() {
           // Try Binance for missing symbols first
           const binRes = await retry(() => fetchCryptoFromBinance(missingSymbols), 2);
           cryptoResult.data = { ...(cryptoResult.data || {}), ...(binRes.data || {}) };
-          provider = succeededCount > 0 ? 'coingecko+binance' : 'binance';
+          provider = succeededCount > 0 ? PROVIDER_COINGECKO_BINANCE : PROVIDER_BINANCE;
         } catch (binErr: any) {
           console.warn('Binance fallback failed for missing symbols', (binErr as any).message || String(binErr));
           // Try CoinPaprika fallback regardless of Binance error
@@ -417,13 +428,13 @@ export async function fetchAndStoreRates() {
                 // for multiple symbols; otherwise use legacy 'binance' label
                 // for single-symbol fallback to preserve historical semantics.
                 if (succeededCount > 0) {
-                  provider = 'coingecko+coinpaprika';
+                  provider = PROVIDER_COINGECKO_COINPAPRIKA;
                 } else {
                   const ccKeys = Object.keys(ccRes.data || {});
                   if (process.env.BINANCE_KEY) {
-                    provider = 'coinpaprika';
+                    provider = PROVIDER_COINPAPRIKA;
                   } else {
-                    provider = ccKeys.length > 1 ? 'coinpaprika' : 'binance';
+                    provider = ccKeys.length > 1 ? PROVIDER_COINPAPRIKA : PROVIDER_BINANCE;
                   }
                 }
             } else {
@@ -436,14 +447,14 @@ export async function fetchAndStoreRates() {
           }
         }
         const finalCount = Object.keys(cryptoResult.data || {}).length;
-        if (finalCount === 0) provider = 'none';
+        if (finalCount === 0) provider = PROVIDER_NONE;
       } else if (succeededCount === 0) {
         // full failure from CoinGecko - try Binance then CoinPaprika
         const symbolsForFallback = (filteredIds.length ? filteredIds : configuredIds).map((id: string) => COINGECKO_MAP[id] ?? id.toUpperCase());
         try {
           const binRes = await retry(() => fetchCryptoFromBinance(symbolsForFallback), 2);
           cryptoResult = binRes;
-          provider = 'binance';
+          provider = PROVIDER_BINANCE;
         } catch (binErr: any) {
           console.warn('Binance fallback failed on full fallback', (binErr as any).message || String(binErr));
           // Try CoinPaprika as a public fallback in full-failure scenarios
@@ -453,11 +464,11 @@ export async function fetchAndStoreRates() {
               cryptoResult = ccRes;
               // If CoinPaprika returned any data for our requested symbols,
               // prefer the explicit 'coinpaprika' provider label for clarity.
-              provider = 'coinpaprika';
+              provider = PROVIDER_COINPAPRIKA;
             } else {
               console.warn('CoinPaprika returned no data on full fallback; proceeding with ECB-only fiat data.');
-              cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
-              provider = 'none';
+              cryptoResult = { provider: PROVIDER_NONE, data: {}, headers: {} } as any;
+              provider = PROVIDER_NONE;
             }
           } catch (ccErr: any) {
             console.warn('CoinPaprika fallback failed on full fallback', (ccErr as any).message || String(ccErr));
@@ -472,7 +483,7 @@ export async function fetchAndStoreRates() {
       try {
         const binRes = await retry(() => fetchCryptoFromBinance(symbolsForFallback), 2);
         cryptoResult = binRes;
-        provider = 'binance';
+        provider = PROVIDER_BINANCE;
       } catch (binErr: any) {
         const status = binErr?.response?.status;
         if (status === 451) {
@@ -483,11 +494,11 @@ export async function fetchAndStoreRates() {
               cryptoResult = ccRes;
               // If CoinPaprika returned any data for our requested symbols,
               // prefer the explicit 'coinpaprika' provider label for clarity.
-              provider = 'coinpaprika';
+              provider = PROVIDER_COINPAPRIKA;
             } else {
               console.warn('CoinPaprika returned no data on full fallback; proceeding with ECB-only fiat data.');
-              cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
-              provider = 'none';
+              cryptoResult = { provider: PROVIDER_NONE, data: {}, headers: {} } as any;
+              provider = PROVIDER_NONE;
             }
           } catch (ccErr: any) {
             console.warn('CoinPaprika fallback failed on full fallback', (ccErr as any).message || String(ccErr));
@@ -496,8 +507,8 @@ export async function fetchAndStoreRates() {
           }
         } else {
           console.warn('Binance fallback failed on full fallback', (binErr as any).message || String(binErr));
-          cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
-          provider = 'none';
+          cryptoResult = { provider: PROVIDER_NONE, data: {}, headers: {} } as any;
+          provider = PROVIDER_NONE;
         }
       }
     }
@@ -524,7 +535,7 @@ export async function fetchAndStoreRates() {
 
   const rates: RatesResult = {};
   // Normalize raw provider result into symbol -> { usd?, eur? }
-  if (cryptoResult.provider === 'coingecko') {
+  if (cryptoResult.provider === PROVIDER_COINGECKO) {
     for (const [id, vals] of Object.entries(cryptoResult.data)) {
       const symbol = COINGECKO_MAP[id] ?? id.toUpperCase();
       rates[symbol] = vals as any; // e.g. { usd: 123, eur: 110 }
