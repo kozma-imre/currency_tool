@@ -195,6 +195,7 @@ async function fetchCryptoFromBinance(symbols: string[]) {
 }
 
 // CoinPaprika is a public API we use as a fallback. We search by symbol then fetch tickers.
+// Improve robustness: try multiple search candidates and tolerate per-candidate failures
 async function fetchCryptoFromCoinPaprika(symbols: string[]) {
   const out: Record<string, any> = {};
   if (!symbols || symbols.length === 0) return { provider: 'coinpaprika', data: out, headers: {} };
@@ -202,22 +203,63 @@ async function fetchCryptoFromCoinPaprika(symbols: string[]) {
     try {
       // search for coin by symbol
       const searchRes = await axios.get('https://api.coinpaprika.com/v1/search', { params: { query: symbol, limit: 5, type: 'coins' }, timeout: 10000 });
-      const results = searchRes.data && searchRes.data.coins ? searchRes.data.coins : searchRes.data || [];
-      let coinEntry: any = null;
-      if (Array.isArray(results)) {
-        coinEntry = results.find((r: any) => String(r.symbol).toUpperCase() === String(symbol).toUpperCase()) || results[0];
-      }
-      if (!coinEntry || !coinEntry.id) {
-        // unable to find mapping for this symbol
+      const rawResults = searchRes.data && searchRes.data.coins ? searchRes.data.coins : searchRes.data || [];
+      const results: any[] = Array.isArray(rawResults) ? rawResults : [];
+      if (!results.length) {
+        console.warn('CoinPaprika search returned no candidates for symbol', symbol, 'searchResponse:', truncateRaw(rawResults, 500));
         continue;
       }
-      const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${coinEntry.id}`, { timeout: 10000 });
-      const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
-      const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
-      const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
-      out[String(symbol).toUpperCase()] = { usd, eur };
+
+      // prefer exact symbol match first, then try other candidates in order
+      const normalized = String(symbol).toUpperCase();
+      const exactIdx = results.findIndex((r: any) => String(r.symbol).toUpperCase() === normalized);
+      const ordered = exactIdx >= 0 ? [results[exactIdx], ...results.slice(0, exactIdx), ...results.slice(exactIdx + 1)] : results;
+
+      let success = false;
+      const triedIds: string[] = [];
+      for (const candidate of ordered) {
+        if (!candidate || !candidate.id) continue;
+        const id = candidate.id;
+        triedIds.push(id);
+        try {
+          const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${id}`, { timeout: 10000 });
+          const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+          const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+          const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+          out[String(symbol).toUpperCase()] = { usd, eur };
+          success = true;
+          break; // done for this symbol
+        } catch (err: any) {
+          const status = err?.response?.status;
+          // If candidate-specific ticker fails (400/etc), try next candidate
+          console.warn('CoinPaprika ticker failed for candidate', id, 'symbol', symbol, 'status:', status, 'error:', (err as any).message || String(err));
+          if (status === 429) {
+            // respect Retry-After header if present
+            const rh = err?.response?.headers?.['retry-after'];
+            const waitSec = Number(rh) || 1;
+            await sleep(waitSec * 1000 + 250);
+            // retry once for this candidate
+            try {
+              const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${id}`, { timeout: 10000 });
+              const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+              const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+              const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+              out[String(symbol).toUpperCase()] = { usd, eur };
+              success = true;
+              break;
+            } catch (err2: any) {
+              console.warn('Retry of CoinPaprika ticker failed for candidate', id, 'symbol', symbol, 'error:', (err2 as any).message || String(err2));
+            }
+          }
+          // otherwise continue to next candidate
+        }
+      }
+
+      if (!success) {
+        console.warn('CoinPaprika returned no usable ticker for symbol', symbol, 'triedIds:', triedIds.join(', '));
+      }
     } catch (err: any) {
-      console.warn('CoinPaprika request failed for symbol', symbol, 'error:', (err as any).message || String(err));
+      console.warn('CoinPaprika search failed for symbol', symbol, 'error:', (err as any).message || String(err));
       // continue with other symbols
     }
   }
@@ -562,6 +604,18 @@ export async function fetchAndStoreRates() {
   }
 
   const fetchedAt = new Date().toISOString();
+
+  // If we failed to obtain any crypto rates at all, ensure we mark provider as 'none'
+  // and alert so the operator knows something went wrong while still preserving fiat writes.
+  if (!Object.keys(rates).length) {
+    console.warn('No crypto rates available after fallbacks; marking provider as none and sending alert');
+    provider = 'none';
+    try {
+      await sendTelegramAlert('No crypto rates were fetched for configured symbols; only fiat rates written to Firestore. Check provider failures and rate-limits.');
+    } catch (e) {
+      // ignore alert sending failure
+    }
+  }
 
   // Minimal payload for `latest` — small and stable for clients
   const latestPayload = {
