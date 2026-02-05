@@ -94,7 +94,8 @@ export async function fetchAndStoreRates() {
   } else {
     if (filteredIds.length < configuredIds.length) {
       const dropped = configuredIds.filter(id => !supportedIds.has(id));
-      console.warn('Dropping unsupported CoinGecko ids:', dropped);
+      const sample = Array.from(supportedIds).slice(0, 10);
+      console.warn(`Dropping unsupported CoinGecko ids: ${JSON.stringify(dropped)} (supportedCount=${supportedIds.size}, sampleSupported=${sample.join(', ')})`);
     }
     try {
       // Try CoinGecko first (batched). If no results, fall back to CoinPaprika.

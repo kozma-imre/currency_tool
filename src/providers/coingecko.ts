@@ -18,28 +18,61 @@ const COINGECKO_MAX_IDS_PER_REQUEST = Number(process.env.COINGECKO_MAX_IDS_PER_R
 const COINGECKO_BATCH_DELAY_MS = Number(process.env.COINGECKO_BATCH_DELAY_MS) || 300;
 
 export async function fetchSupportedCoinIds(): Promise<Set<string>> {
-  if (process.env.NODE_ENV === 'test') {
-    const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
-    const data = res.data;
-    return new Set((data || []).map((c: any) => c.id));
-  }
+  // In test mode we still call CoinGecko but we will run the more robust
+  // path below so tests can simulate both good and bad responses by
+  // setting NODE_ENV !== 'test' when needed.
+  const isTest = process.env.NODE_ENV === 'test';
 
+  // Try to use a cached copy if present and fresh
   try {
     if (fs.existsSync(COINGECKO_COINS_CACHE_FILE)) {
       const raw = fs.readFileSync(COINGECKO_COINS_CACHE_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && parsed.ts && (Date.now() - parsed.ts) < COINGECKO_COINS_CACHE_TTL * 1000) {
-        return new Set((parsed.data || []).map((c: any) => c.id));
+        const parsedIds = (parsed.data || []).map((c: any) => c.id);
+        // Basic sanity checks on the cache: it should contain at least 100 entries
+        // and include common coins like bitcoin/ethereum. Otherwise force a refetch.
+        const suspicious = parsedIds.length < 100 || !parsedIds.includes('bitcoin');
+        if (!suspicious) {
+          return new Set(parsedIds);
+        }
+        console.warn('CoinGecko cache appears suspicious: length=', parsedIds.length, 'forcing refetch');
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Failed to read CoinGecko cache:', (e as any).message || String(e));
+  }
 
-  const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
-  const data = Array.isArray(res.data) ? res.data : [];
+  // Fetch the full coin list from CoinGecko
+  let res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
+  let data = Array.isArray(res.data) ? res.data : [];
+
+  // If the list looks truncated (small length or missing expected ids), try markets endpoint
+  const looksBad = data.length < 100 || !data.some((c: any) => c && c.id === 'bitcoin');
+  if (looksBad) {
+    console.warn('CoinGecko /coins/list appears truncated (len=' + data.length + '); attempting fallback to markets endpoint');
+    try {
+      const marketsRes = await retry(() => axios.get(COINGECKO_MARKETS_URL, { timeout: 10000, params: { vs_currency: 'usd', order: 'market_cap_desc', per_page: 250, page: 1, sparkline: false } }), 1);
+      const markets = Array.isArray(marketsRes.data) ? marketsRes.data.map((m: any) => ({ id: m.id })) : [];
+      // Prefer markets list if it contains bitcoin/ethereum
+      if (markets.length && markets.some((m: any) => m.id === 'bitcoin')) {
+        data = markets;
+        console.warn('CoinGecko markets fallback provided', markets.length, 'ids');
+      } else {
+        console.warn('CoinGecko markets fallback did not return expected ids');
+      }
+    } catch (e) {
+      console.warn('CoinGecko markets fallback failed:', (e as any).message || String(e));
+    }
+  }
+
   const limited = data.slice(0, COINGECKO_COINS_CACHE_LIMIT);
   try {
     fs.writeFileSync(COINGECKO_COINS_CACHE_FILE, JSON.stringify({ ts: Date.now(), data: limited }), 'utf8');
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Failed to write CoinGecko cache:', (e as any).message || String(e));
+  }
+
   return new Set((limited || []).map((c: any) => c.id));
 }
 

@@ -12,7 +12,20 @@ export async function fetchCryptoFromCoinPaprika(symbols: string[]) {
       const results: any[] = Array.isArray(rawResults) ? rawResults : [];
       if (!results.length) {
         console.warn('CoinPaprika search returned no candidates for symbol', symbol, 'searchResponse:', truncateRaw(rawResults, 500));
-        continue;
+        // Try a best-effort ticker lookup using the symbol as id (lowercased)
+        try {
+          const guessId = String(symbol).toLowerCase();
+          const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${guessId}`, { timeout: 10000 });
+          const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+          const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+          const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+          out[String(symbol).toUpperCase()] = { usd, eur };
+          continue;
+        } catch (guessErr: any) {
+          // Not found — proceed to the normal loop (no candidates)
+          console.warn('CoinPaprika best-effort ticker lookup failed for', symbol, 'error:', (guessErr as any).message || String(guessErr));
+          continue;
+        }
       }
 
       const normalized = String(symbol).toUpperCase();
@@ -60,6 +73,21 @@ export async function fetchCryptoFromCoinPaprika(symbols: string[]) {
       }
     } catch (err: any) {
       console.warn('CoinPaprika search failed for symbol', symbol, 'error:', (err as any).message || String(err));
+      // If the search call returned a 4xx for some symbols, try best-effort
+      // ticker lookup using the symbol as id before giving up.
+      const status = err?.response?.status;
+      if (status === 400) {
+        try {
+          const guessId = String(symbol).toLowerCase();
+          const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${guessId}`, { timeout: 10000 });
+          const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+          const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+          const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+          out[String(symbol).toUpperCase()] = { usd, eur };
+        } catch (guessErr: any) {
+          console.warn('CoinPaprika fallback ticker lookup failed for', symbol, 'error:', (guessErr as any).message || String(guessErr));
+        }
+      }
     }
   }
   return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };
