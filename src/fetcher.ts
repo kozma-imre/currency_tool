@@ -99,6 +99,13 @@ export async function fetchAndStoreRates() {
     }
   };
 
+  // Initialize top-fill/monitoring variables in function scope so they are available later
+  let recoveredCountBeforeTopFill = 0;
+  let topFillAction: string | undefined;
+  let topFillAdded = 0;
+  let topFillReplaced = 0;
+  let missingRequestedSymbols: string[] = [];
+
   if (filteredIds.length === 0) {
     console.warn('No configured CRYPTO_IDS are supported by CoinGecko; proceeding to CoinPaprika fallback or ECB-only.');
     // Ensure we have a safe default so later code that reads `cryptoResult` does not crash.
@@ -111,23 +118,25 @@ export async function fetchAndStoreRates() {
       const sample = Array.from(supportedIds).slice(0, 10);
       console.warn(`Dropping unsupported CoinGecko ids: ${JSON.stringify(dropped)} (supportedCount=${supportedIds.size}, sampleSupported=${sample.join(', ')})`);
     }
+    // top-fill variables are declared in the outer scope to be available for monitoring later
+
     try {
       // Try CoinGecko first (batched). If no results, fall back to CoinPaprika.
       cryptoResult = await fetchCryptoFromCoingecko(filteredIds, coinGeckoFiats);
       const missingIds: string[] = cryptoResult.missing || [];
       const succeededCount = Object.keys(cryptoResult.data || {}).length;
       if (missingIds.length) {
-        const missingSymbols = missingIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
+        missingRequestedSymbols = missingIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
         try {
           // Try Binance for missing symbols first
-          const binRes = await retry(() => fetchCryptoFromBinance(missingSymbols), 2);
+          const binRes = await retry(() => fetchCryptoFromBinance(missingRequestedSymbols), 2);
           cryptoResult.data = { ...(cryptoResult.data || {}), ...(binRes.data || {}) };
           provider = succeededCount > 0 ? PROVIDER_COINGECKO_BINANCE : PROVIDER_BINANCE;
         } catch (binErr: any) {
           console.warn('Binance fallback failed for missing symbols', (binErr as any).message || String(binErr));
           // Try CoinPaprika fallback regardless of Binance error
           try {
-            const ccRes = await retry(() => fetchCryptoFromCoinPaprika(missingSymbols), 1);
+            const ccRes = await retry(() => fetchCryptoFromCoinPaprika(missingRequestedSymbols), 1);
             if (ccRes && ccRes.data && Object.keys(ccRes.data).length > 0) {
               cryptoResult.data = { ...(cryptoResult.data || {}), ...(ccRes.data || {}) };
                 // If CoinPaprika returned any data for missing symbols, prefer
@@ -147,15 +156,81 @@ export async function fetchAndStoreRates() {
                 }
             } else {
               console.warn('CoinPaprika returned no data for missing symbols; proceeding with partial CoinGecko data.');
-              try { await sendTelegramAlert(`CoinPaprika fallback returned no data for missing symbols: ${missingSymbols.join(', ')}`); } catch (e) {}
+              try { await sendTelegramAlert(`CoinPaprika fallback returned no data for missing symbols: ${missingRequestedSymbols.join(', ')}`); } catch (e) {}
             }
           } catch (ccErr: any) {
             console.warn('CoinPaprika fallback failed for missing symbols', (ccErr as any).message || String(ccErr));
-            try { await sendTelegramAlert(`CoinPaprika fallback failed for missing symbols: ${missingSymbols.join(', ')}. Error: ${(ccErr as any).message || String(ccErr)}`); } catch (e) {}
+            try { await sendTelegramAlert(`CoinPaprika fallback failed for missing symbols: ${missingRequestedSymbols.join(', ')}. Error: ${(ccErr as any).message || String(ccErr)}`); } catch (e) {}
           }
         }
         const finalCount = Object.keys(cryptoResult.data || {}).length;
         if (finalCount === 0) provider = PROVIDER_NONE;
+
+        // Prepare monitoring variables for top-fill action
+        recoveredCountBeforeTopFill = finalCount;
+        const requestedCount = typeof requestedTopN === 'number' ? requestedTopN : undefined;
+        const missingSymbolsFromRequested = (requestedCount ? configuredIds.map(id => (COINGECKO_MAP[id] ?? id.toUpperCase())).filter(sym => !(sym in (cryptoResult.data || {}))).slice(0, 200) : []);
+
+        // If the run was requested as a top:N and we recovered only a partial set,
+        // attempt a CoinPaprika top-N fetch. Strategy controls whether we fill missing
+        // symbols or replace the whole set when below a threshold.
+        if (typeof requestedTopN === 'number' && requestedTopN > 0 && finalCount < requestedTopN) {
+          const strategy = (process.env.COINPAPRIKA_TOP_FILL_STRATEGY || 'replace').toLowerCase();
+          const threshold = Number(process.env.COINPAPRIKA_TOP_FILL_THRESHOLD) || 0.8;
+          try {
+            const topTickers = await fetchTopCoinpaprikaTickers(requestedTopN);
+            const topCount = Object.keys(topTickers).length;
+            if (!topCount) {
+              console.warn('CoinPaprika top-N returned no tickers; skipping top-fill');
+              topFillAction = 'none';
+            } else if (strategy === 'fill') {
+              let added = 0;
+              for (const [sym, vals] of Object.entries(topTickers)) {
+                if (!cryptoResult.data[String(sym)]) {
+                  cryptoResult.data[String(sym)] = vals;
+                  added++;
+                }
+              }
+              if (added > 0) {
+                topFillAction = 'fill';
+                topFillAdded = added;
+                provider = (Object.keys(cryptoResult.data || {}).length > 0 && finalCount > 0) ? PROVIDER_COINGECKO_COINPAPRIKA : PROVIDER_COINPAPRIKA;
+                try { await sendTelegramAlert(`CoinPaprika top-${requestedTopN} filled ${added} missing symbols`); } catch (e) { addErrorMsg('telegram-send-fail', e); }
+                try { await writeMonitoringLog({ runId, provider, operation: 'top_fill', durationMs: Date.now() - start, status: 'ok', meta: { topFillStrategy: 'fill', requestedTopN, added, missingSample: missingRequestedSymbols, missingSymbolsFromRequested } }); } catch (e) { addErrorMsg('writeMonitoringLog-fail', e); }
+              }
+            } else if (strategy === 'replace') {
+              const recoveredRatio = finalCount / requestedTopN;
+              if (recoveredRatio < threshold) {
+                // Replace cryptoResult.data with topTickers (symbol-keyed)
+                cryptoResult.data = { ...(topTickers as any) };
+                provider = PROVIDER_COINPAPRIKA;
+                const replaced = Object.keys(cryptoResult.data).length;
+                topFillAction = 'replace';
+                topFillReplaced = replaced;
+                try { await sendTelegramAlert(`CoinPaprika top-${requestedTopN} used to replace partial CoinGecko results (replaced=${replaced})`); } catch (e) { addErrorMsg('telegram-send-fail', e); }
+                try { await writeMonitoringLog({ runId, provider, operation: 'top_fill_replace', durationMs: Date.now() - start, status: 'ok', meta: { topFillStrategy: 'replace', requestedTopN, recoveredCount: finalCount, replaced, missingSample: missingRequestedSymbols, missingSymbolsFromRequested } }); } catch (e) { addErrorMsg('writeMonitoringLog-fail', e); }
+              } else {
+                // Recovered enough from CoinGecko; do a light fill for missing only
+                let added = 0;
+                for (const [sym, vals] of Object.entries(topTickers)) {
+                  if (!cryptoResult.data[String(sym)]) {
+                    cryptoResult.data[String(sym)] = vals;
+                    added++;
+                  }
+                }
+                if (added > 0) {
+                  topFillAction = 'replace_fill';
+                  topFillAdded = added;
+                  try { await sendTelegramAlert(`CoinPaprika top-${requestedTopN} filled ${added} missing symbols (strategy=replace, threshold not reached)`); } catch (e) { addErrorMsg('telegram-send-fail', e); }
+                  try { await writeMonitoringLog({ runId, provider, operation: 'top_fill', durationMs: Date.now() - start, status: 'ok', meta: { topFillStrategy: 'replace_fill', requestedTopN, added, missingSample: missingRequestedSymbols } }); } catch (e) { addErrorMsg('writeMonitoringLog-fail', e); }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('CoinPaprika top-N fill failed:', (e as any).message || String(e));
+            topFillAction = 'failed';
+          }
+        }
       } else if (succeededCount === 0) {
         // full failure from CoinGecko - try Binance then CoinPaprika
         const symbolsForFallback = (filteredIds.length ? filteredIds : configuredIds).map((id: string) => COINGECKO_MAP[id] ?? id.toUpperCase());
@@ -392,7 +467,10 @@ export async function fetchAndStoreRates() {
   };
 
   const durationMs = Date.now() - start;
-  await writeMonitoringLog({ runId, provider, operation: 'fetch_and_store', durationMs, status: 'ok', meta: { fetchedAt }, timestamp: new Date().toISOString() });
+  // Enrich monitoring log with top-fill diagnostics if applicable
+  const monitoringMeta: any = { fetchedAt, requestedTopN: requestedTopN ?? null, requestedCount: requestedTopN ?? null, recoveredCountBeforeTopFill, finalCount: Object.keys(cryptoResult.data || {}).length, provider, diagnostics };
+  if (typeof requestedTopN === 'number') monitoringMeta.topFill = { action: topFillAction ?? null, added: topFillAdded, replaced: topFillReplaced };
+  await writeMonitoringLog({ runId, provider, operation: 'fetch_and_store', durationMs, status: 'ok', meta: monitoringMeta, timestamp: new Date().toISOString() });
 
   await writeLatest(latestPayload);
   await writeSnapshot(snapshotPayload, new Date());
