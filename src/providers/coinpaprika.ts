@@ -33,6 +33,34 @@ export async function fetchTopCoinpaprikaIds(n = COINPAPRIKA_TOP_N): Promise<Arr
   return data;
 }
 
+export async function fetchTopCoinpaprikaTickers(n = COINPAPRIKA_TOP_N): Promise<Record<string, { usd?: number; eur?: number }>> {
+  try {
+    const res = await retry(() => axios.get('https://api.coinpaprika.com/v1/tickers', { params: { limit: n }, timeout: 15000 }), 2);
+    const arr = Array.isArray(res.data) ? res.data : [];
+    const out: Record<string, { usd?: number; eur?: number }> = {};
+    for (const item of arr) {
+      try {
+        const symbol = String(item.symbol || '').toUpperCase();
+        const quotes = item.quotes || {};
+        const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+        const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+        if (symbol) {
+          const entry: { usd?: number; eur?: number } = {};
+          if (usd !== undefined) entry.usd = usd;
+          if (eur !== undefined) entry.eur = eur;
+          if (Object.keys(entry).length) out[symbol] = entry;
+        }
+      } catch (e) {
+        // skip malformed entries
+      }
+    }
+    return out;
+  } catch (e) {
+    console.warn('Failed to fetch top tickers from CoinPaprika:', (e as any).message || String(e));
+    return {};
+  }
+}
+
 export async function fetchCryptoFromCoinPaprika(symbols: string[]) {
   const out: Record<string, any> = {};
   if (!symbols || symbols.length === 0) return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };

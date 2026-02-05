@@ -6,7 +6,7 @@ import type { RatesResult } from './types';
 import { PROVIDER_COINGECKO, PROVIDER_BINANCE, PROVIDER_COINPAPRIKA, PROVIDER_COINGECKO_BINANCE, PROVIDER_COINGECKO_COINPAPRIKA, PROVIDER_NONE } from './constants';
 import { fetchSupportedCoinIds, fetchTopCoinIds, fetchCryptoFromCoingecko } from './providers/coingecko';
 import { fetchCryptoFromBinance } from './providers/binance';
-import { fetchCryptoFromCoinPaprika } from './providers/coinpaprika';
+import { fetchCryptoFromCoinPaprika, fetchTopCoinpaprikaTickers } from './providers/coinpaprika';
 import { retry, truncateRaw } from './utils';
 
 const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
@@ -63,10 +63,12 @@ export async function fetchAndStoreRates() {
 
   // Support top-N via `CRYPTO_IDS=top:100` or env `CRYPTO_USE_TOP_N=100`
   let configuredIds: string[] = [];
+  let requestedTopN: number | undefined;
   const topMatch = /^top:(\d+)$/i.exec(rawConfigured);
   const topEnvN = process.env.CRYPTO_USE_TOP_N ? Number(process.env.CRYPTO_USE_TOP_N) : undefined;
   if (topMatch || topEnvN) {
     const n = topMatch ? Number(topMatch[1]) : (topEnvN || 100);
+    requestedTopN = n;
     const topSet = await fetchTopCoinIds(n);
     configuredIds = Array.from(topSet);
   } else {
@@ -324,8 +326,30 @@ export async function fetchAndStoreRates() {
 
   const fetchedAt = new Date().toISOString();
 
-  // If we failed to obtain any crypto rates at all, ensure we mark provider as 'none'
-  // and alert so the operator knows something went wrong while still preserving fiat writes.
+  // If we failed to obtain any crypto rates at all, try a CoinPaprika top-N fallback when configured for top:N
+  if (!Object.keys(rates).length) {
+    // Try top-N CoinPaprika tickers as a last-resort fallback if requested
+    if (!provider || provider === PROVIDER_NONE || provider === 'none') {
+      if (typeof requestedTopN === 'number' && requestedTopN > 0) {
+        try {
+          const topTickers = await fetchTopCoinpaprikaTickers(requestedTopN);
+          if (topTickers && Object.keys(topTickers).length) {
+            // adopt the CoinPaprika top tickers as our rates (already keyed by symbol)
+            for (const [sym, vals] of Object.entries(topTickers)) {
+              // pick only requested frc (fiat currencies) - keep usd/eur for later conversion
+              rates[sym] = vals as any;
+            }
+            provider = PROVIDER_COINPAPRIKA;
+            try { await sendTelegramAlert(`CoinPaprika top-${requestedTopN} fallback used; returning ${Object.keys(topTickers).length} symbols`); } catch (e) { addErrorMsg('telegram-send-fail', e); }
+          }
+        } catch (e) {
+          console.warn('CoinPaprika top-N fallback failed:', (e as any).message || String(e));
+        }
+      }
+    }
+  }
+
+  // If still empty after attempting top-N fallback, mark provider none and alert
   if (!Object.keys(rates).length) {
     console.warn('No crypto rates available after fallbacks; marking provider as none and sending alert');
     provider = PROVIDER_NONE;
