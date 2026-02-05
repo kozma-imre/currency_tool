@@ -86,6 +86,17 @@ export async function fetchAndStoreRates() {
   const supportedIds = await fetchSupportedCoinIds();
   const filteredIds = configuredIds.filter(id => supportedIds.has(id));
 
+  // Diagnostics to report when provider ends up as 'none'
+  const diagnostics: { supportedCount?: number; droppedIds?: string[]; recentErrors: string[] } = { supportedCount: supportedIds.size, droppedIds: [], recentErrors: [] };
+  const addErrorMsg = (ctx: string, e: any) => {
+    try {
+      const m = (e && (e.message || e.response && e.response.status && String(e.response.status))) || String(e);
+      diagnostics.recentErrors.push(`${ctx}: ${m}`);
+    } catch (_) {
+      diagnostics.recentErrors.push(`${ctx}: (unknown error)`);
+    }
+  };
+
   if (filteredIds.length === 0) {
     console.warn('No configured CRYPTO_IDS are supported by CoinGecko; proceeding to CoinPaprika fallback or ECB-only.');
     // Ensure we have a safe default so later code that reads `cryptoResult` does not crash.
@@ -94,6 +105,7 @@ export async function fetchAndStoreRates() {
   } else {
     if (filteredIds.length < configuredIds.length) {
       const dropped = configuredIds.filter(id => !supportedIds.has(id));
+      diagnostics.droppedIds = dropped;
       const sample = Array.from(supportedIds).slice(0, 10);
       console.warn(`Dropping unsupported CoinGecko ids: ${JSON.stringify(dropped)} (supportedCount=${supportedIds.size}, sampleSupported=${sample.join(', ')})`);
     }
@@ -173,12 +185,14 @@ export async function fetchAndStoreRates() {
       }
     } catch (err) {
       console.warn('CoinGecko fetch failed; attempting Binance then CoinPaprika fallback', (err as any).message || String(err));
+      addErrorMsg('coingecko-full-fail', err);
       const symbolsForFallback = (filteredIds.length ? filteredIds : configuredIds).map((id: string) => COINGECKO_MAP[id] ?? id.toUpperCase());
       try {
         const binRes = await retry(() => fetchCryptoFromBinance(symbolsForFallback), 2);
         cryptoResult = binRes;
         provider = PROVIDER_BINANCE;
       } catch (binErr: any) {
+        addErrorMsg('binance-full-fail', binErr);
         const status = binErr?.response?.status;
         if (status === 451) {
           console.warn('Binance returned 451 on full fallback; attempting CoinPaprika as a public fallback.');
@@ -196,6 +210,7 @@ export async function fetchAndStoreRates() {
             }
           } catch (ccErr: any) {
             console.warn('CoinPaprika fallback failed on full fallback', (ccErr as any).message || String(ccErr));
+            addErrorMsg('coinpaprika-full-fail', ccErr);
             cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
             provider = 'none';
           }
@@ -315,7 +330,13 @@ export async function fetchAndStoreRates() {
     console.warn('No crypto rates available after fallbacks; marking provider as none and sending alert');
     provider = 'none';
     try {
-      await sendTelegramAlert('No crypto rates were fetched for configured symbols; only fiat rates written to Firestore. Check provider failures and rate-limits.');
+      const detail = `No crypto rates were fetched for configured symbols; only fiat rates written to Firestore.`;
+      // Append diagnostics to the alert for operator visibility
+      const diag = JSON.stringify({ supportedCount: diagnostics.supportedCount, droppedIds: diagnostics.droppedIds, recentErrors: diagnostics.recentErrors.slice(-10) }, null, 2);
+      const message = `${detail}\n\nDiagnostics:\n${diag}`;
+      try { await sendTelegramAlert(message); } catch (e) { addErrorMsg('telegram-send-fail', e); }
+      // also write monitoring log with diagnostics for observability
+      try { await writeMonitoringLog({ runId, provider, operation: 'fetch_and_store', durationMs: Date.now() - start, status: 'warn', meta: { fetchedAt, diagnostics } }); } catch (e) { addErrorMsg('writeMonitoringLog-fail', e); }
     } catch (e) {
       // ignore alert sending failure
     }

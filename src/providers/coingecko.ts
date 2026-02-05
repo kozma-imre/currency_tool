@@ -182,6 +182,8 @@ export async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies
             if (invalidIds.length) {
               console.warn('Dropping unsupported/invalid CoinGecko ids:', invalidIds);
               try { await sendTelegramAlert(`Dropped unsupported CoinGecko ids during fetch: ${invalidIds.join(', ')}`); } catch (e) {}
+              // record for diagnostics
+              if (typeof (global as any).__fetcherDiagnostics === 'object') (global as any).__fetcherDiagnostics.droppedIds = invalidIds;
             }
             if (added > 0 && invalidIds.length > 0) {
               try { await sendTelegramAlert(`CoinGecko returned partial results (recovered ${added} via per-id calls). Missing: ${invalidIds.join(', ')}`); } catch (e) {}

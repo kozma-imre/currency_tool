@@ -53,5 +53,12 @@ describe('fetcher no crypto fallback', () => {
     expect(tgSpy).toHaveBeenCalled();
     const called = tgSpy.mock.calls.some(c => String(c[0]).includes('No crypto rates were fetched'));
     expect(called).toBe(true);
+    // ensure diagnostics were included in the alert
+    const diagCalled = tgSpy.mock.calls.some(c => String(c[0]).includes('supportedCount') && String(c[0]).includes('recentErrors'));
+    expect(diagCalled).toBe(true);
+    // There should be a monitoring log entry with diagnostics
+    expect(firestore.writeMonitoringLog).toHaveBeenCalled();
+    const mlCalled = (firestore.writeMonitoringLog as jest.Mock).mock.calls[0][0];
+    expect(mlCalled.meta && mlCalled.meta.diagnostics).toBeDefined();
   });
 });

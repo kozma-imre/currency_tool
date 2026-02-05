@@ -12,6 +12,7 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:integration": "jest --testMatch '**/__tests__/**/*.firetest.ts' --runInBand",
+    "warm-coingecko-cache": "ts-node src/scripts/warm-coingecko-cache.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit"
