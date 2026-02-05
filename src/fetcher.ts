@@ -1,317 +1,25 @@
 import axios from 'axios';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { initFirestore, writeLatest, writeSnapshot, writeMonitoringLog } from './firestore';
 import { sendTelegramAlert } from './notify/telegram';
 import type { RatesResult } from './types';
 import { PROVIDER_COINGECKO, PROVIDER_BINANCE, PROVIDER_COINPAPRIKA, PROVIDER_COINGECKO_BINANCE, PROVIDER_COINGECKO_COINPAPRIKA, PROVIDER_NONE } from './constants';
+import { fetchSupportedCoinIds, fetchTopCoinIds, fetchCryptoFromCoingecko } from './providers/coingecko';
+import { fetchCryptoFromBinance } from './providers/binance';
+import { fetchCryptoFromCoinPaprika } from './providers/coinpaprika';
+import { retry, truncateRaw } from './utils';
 
-const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
-const COINGECKO_LIST_URL = 'https://api.coingecko.com/api/v3/coins/list';
-const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
 const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
-const BINANCE_URL = 'https://api.binance.com/api/v3/ticker/price';
 
-const COINGECKO_COINS_CACHE_TTL = Number(process.env.COINGECKO_COINS_CACHE_TTL) || 24 * 60 * 60; // seconds
-const COINGECKO_COINS_CACHE_FILE = path.join(os.tmpdir(), 'coingecko-coins.json');
-const COINGECKO_COINS_CACHE_LIMIT = Number(process.env.COINGECKO_COINS_CACHE_LIMIT) || 1000;
-
-const COINGECKO_MAX_IDS_PER_REQUEST = Number(process.env.COINGECKO_MAX_IDS_PER_REQUEST) || 50;
-const COINGECKO_BATCH_DELAY_MS = Number(process.env.COINGECKO_BATCH_DELAY_MS) || 300;
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function fetchSupportedCoinIds(): Promise<Set<string>> {
-  // During tests, skip cache to avoid inter-test file pollution and always hit the mocked endpoint
-  if (process.env.NODE_ENV === 'test') {
-    const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
-    const data = res.data;
-    return new Set((data || []).map((c: any) => c.id));
-  }
-
-  try {
-    if (fs.existsSync(COINGECKO_COINS_CACHE_FILE)) {
-      const raw = fs.readFileSync(COINGECKO_COINS_CACHE_FILE, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.ts && (Date.now() - parsed.ts) < COINGECKO_COINS_CACHE_TTL * 1000) {
-        return new Set((parsed.data || []).map((c: any) => c.id));
-      }
-    }
-  } catch (e) {
-    // ignore cache read errors
-  }
-  const res = await retry(() => axios.get(COINGECKO_LIST_URL, { timeout: 10000 }), 2);
-  const data = Array.isArray(res.data) ? res.data : [];
-  // Limit cached set to a reasonable size to avoid huge tmp files and speed lookups
-  const limited = data.slice(0, COINGECKO_COINS_CACHE_LIMIT);
-  try {
-    fs.writeFileSync(COINGECKO_COINS_CACHE_FILE, JSON.stringify({ ts: Date.now(), data: limited }), 'utf8');
-  } catch (e) {
-    // ignore cache write errors
-  }
-  return new Set((limited || []).map((c: any) => c.id));
-}
-
-async function fetchTopCoinIds(n = 100): Promise<Set<string>> {
-  // Fetch top-N coins by market cap using /coins/markets and cache per-n
-  const cacheFile = path.join(os.tmpdir(), `coingecko-top-${n}.json`);
-  const ttl = COINGECKO_COINS_CACHE_TTL;
-  if (process.env.NODE_ENV === 'test') {
-    const res = await retry(() => axios.get(COINGECKO_MARKETS_URL, { timeout: 10000, params: { vs_currency: 'usd', order: 'market_cap_desc', per_page: n, page: 1, sparkline: false } }), 2);
-    const data = res.data;
-    return new Set((data || []).map((c: any) => c.id));
-  }
-
-  try {
-    if (fs.existsSync(cacheFile)) {
-      const raw = fs.readFileSync(cacheFile, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.ts && (Date.now() - parsed.ts) < ttl * 1000) {
-        return new Set((parsed.data || []).map((c: any) => c.id));
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  const res = await retry(() => axios.get(COINGECKO_MARKETS_URL, { timeout: 10000, params: { vs_currency: 'usd', order: 'market_cap_desc', per_page: n, page: 1, sparkline: false } }), 2);
-  const data = res.data;
-  try {
-    fs.writeFileSync(cacheFile, JSON.stringify({ ts: Date.now(), data }), 'utf8');
-  } catch (e) {
-    // ignore
-  }
-  return new Set((data || []).map((c: any) => c.id));
-}
 
 const COINGECKO_MAP: Record<string, string> = { bitcoin: 'BTC', ethereum: 'ETH' };
-const BINANCE_MAP: Record<string, string> = { BTCUSDT: 'BTC', ETHUSDT: 'ETH' };
 
-function truncateRaw(obj: any, max = 2000) {
-  try {
-    const s = JSON.stringify(obj);
-    return s.length > max ? s.slice(0, max) + '...[truncated]' : s;
-  } catch (e) {
-    return String(obj).slice(0, max);
-  }
-}
 
-async function fetchCryptoFromCoingecko(cryptoIds: string[], vsCurrencies: string[]) {
-  // Chunk ids into batches to avoid large single requests and rate-limits
-  const headers: Record<string, string> = {};
-  if (process.env.COINGECKO_API_KEY) {
-    headers['X-CG-PRO-API-KEY'] = process.env.COINGECKO_API_KEY;
-  }
 
-  const out: Record<string, any> = {};
-  const collectedHeaders: Record<string, any> = {};
-  const batches: string[][] = [];
-  for (let i = 0; i < cryptoIds.length; i += COINGECKO_MAX_IDS_PER_REQUEST) {
-    batches.push(cryptoIds.slice(i, i + COINGECKO_MAX_IDS_PER_REQUEST));
-  }
-
-  try {
-    for (let bi = 0; bi < batches.length; bi++) {
-      const batch = batches[bi];
-      if (!batch) continue;
-      const params = { ids: batch.join(','), vs_currencies: vsCurrencies.join(',') };
-      const config: any = { params, timeout: 10000 };
-      if (Object.keys(headers).length) config.headers = headers;
-
-      // Use retry but also honor Retry-After header on 429
-      try {
-        await retry(async () => {
-          try {
-            const res = await axios.get(COINGECKO_URL, config);
-            Object.assign(out, res.data || {});
-            if (res && res.headers) Object.assign(collectedHeaders, res.headers);
-            return res;
-          } catch (err: any) {
-            const status = err?.response?.status;
-            const rh = err?.response?.headers?.['retry-after'];
-            if (status === 429 && rh) {
-              const waitSec = Number(rh) || 1;
-              // Respect Retry-After before retrying
-              await sleep(waitSec * 1000 + 250);
-            }
-            // rethrow so retry() wrapper can apply backoff
-            throw err;
-          }
-        }, 4); // more retries to be resilient to transient rate-limits
-      } catch (err: any) {
-        // If a batch fails even after retries, attempt to isolate invalid ids if we see a 400 or a 429
-        const status = err?.response?.status;
-        if (status === 400 || status === 429) {
-          console.warn('CoinGecko batch returned', status, '; attempting per-id isolation for batch', batch);
-          try {
-            const { validData, invalidIds } = await isolateInvalidIds(batch, vsCurrencies, headers);
-            // Merge back any valid per-id data
-            const prevCount = Object.keys(out || {}).length;
-            Object.assign(out, validData);
-            const postCount = Object.keys(out || {}).length;
-            const added = postCount - prevCount;
-            if (invalidIds.length) {
-              console.warn('Dropping unsupported/invalid CoinGecko ids:', invalidIds);
-              try {
-                await sendTelegramAlert(`Dropped unsupported CoinGecko ids during fetch: ${invalidIds.join(', ')}`);
-              } catch (e) {
-                // ignore telegram failures
-              }
-            }
-            // If we recovered some ids via per-id isolation but still have missing ones, send a partial-data alert
-            if (added > 0 && invalidIds.length > 0) {
-              try {
-                await sendTelegramAlert(`CoinGecko returned partial results (recovered ${added} via per-id calls). Missing: ${invalidIds.join(', ')}`);
-              } catch (e) {}
-            }
-          } catch (innerErr: any) {
-            console.warn('Error during batch isolation for CoinGecko', (innerErr as any).message || String(innerErr));
-          }
-        } else {
-          console.warn('CoinGecko batch failed for ids', batch, 'error:', (err as any).message || String(err));
-        }
-      }
-
-      // small delay between batches to avoid bursts
-      if (bi < batches.length - 1) await sleep(COINGECKO_BATCH_DELAY_MS);
-    }
-  } catch (err: any) {
-    // Unexpected global error while attempting to fetch CoinGecko; return whatever partial data we have
-    console.warn('CoinGecko fetch experienced unexpected error; returning partial results', (err as any).message || String(err));
-  }
-
-  // determine missing ids
-  const missing: string[] = cryptoIds.filter(id => !(id in out));
-  return { provider: PROVIDER_COINGECKO, data: out, headers: collectedHeaders, missing };
-}
-
-async function fetchCryptoFromBinance(symbols: string[]) {
-  // Binance returns per-symbol; fetch sequentially and build a structure similar to CoinGecko
-  const out: Record<string, any> = {};
-  const binanceHeaders: Record<string, string> | undefined = process.env.BINANCE_KEY ? { 'X-MBX-APIKEY': process.env.BINANCE_KEY } : undefined;
-  for (const sym of symbols) {
-    const pair = sym + 'USDT';
-    const config: any = { params: { symbol: pair }, timeout: 10000 };
-    if (binanceHeaders) config.headers = binanceHeaders;
-    const res = await axios.get(BINANCE_URL, config);
-    const price = Number(res.data.price);
-    const mapped = BINANCE_MAP[pair] ?? sym;
-    out[mapped] = { usd: price, eur: undefined };
-  }
-  return { provider: PROVIDER_BINANCE, data: out, headers: {} };
-}
 
 // CoinPaprika is a public API we use as a fallback. We search by symbol then fetch tickers.
 // Improve robustness: try multiple search candidates and tolerate per-candidate failures
-async function fetchCryptoFromCoinPaprika(symbols: string[]) {
-  const out: Record<string, any> = {};
-  if (!symbols || symbols.length === 0) return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };
-  for (const symbol of symbols) {
-    try {
-      // search for coin by symbol
-      const searchRes = await axios.get('https://api.coinpaprika.com/v1/search', { params: { query: symbol, limit: 5, type: 'coins' }, timeout: 10000 });
-      const rawResults = searchRes.data && searchRes.data.coins ? searchRes.data.coins : searchRes.data || [];
-      const results: any[] = Array.isArray(rawResults) ? rawResults : [];
-      if (!results.length) {
-        console.warn('CoinPaprika search returned no candidates for symbol', symbol, 'searchResponse:', truncateRaw(rawResults, 500));
-        continue;
-      }
 
-      // prefer exact symbol match first, then try other candidates in order
-      const normalized = String(symbol).toUpperCase();
-      const exactIdx = results.findIndex((r: any) => String(r.symbol).toUpperCase() === normalized);
-      const ordered = exactIdx >= 0 ? [results[exactIdx], ...results.slice(0, exactIdx), ...results.slice(exactIdx + 1)] : results;
-
-      let success = false;
-      const triedIds: string[] = [];
-      for (const candidate of ordered) {
-        if (!candidate || !candidate.id) continue;
-        const id = candidate.id;
-        triedIds.push(id);
-        try {
-          const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${id}`, { timeout: 10000 });
-          const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
-          const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
-          const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
-          out[String(symbol).toUpperCase()] = { usd, eur };
-          success = true;
-          break; // done for this symbol
-        } catch (err: any) {
-          const status = err?.response?.status;
-          // If candidate-specific ticker fails (400/etc), try next candidate
-          console.warn('CoinPaprika ticker failed for candidate', id, 'symbol', symbol, 'status:', status, 'error:', (err as any).message || String(err));
-          if (status === 429) {
-            // respect Retry-After header if present
-            const rh = err?.response?.headers?.['retry-after'];
-            const waitSec = Number(rh) || 1;
-            await sleep(waitSec * 1000 + 250);
-            // retry once for this candidate
-            try {
-              const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${id}`, { timeout: 10000 });
-              const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
-              const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
-              const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
-              out[String(symbol).toUpperCase()] = { usd, eur };
-              success = true;
-              break;
-            } catch (err2: any) {
-              console.warn('Retry of CoinPaprika ticker failed for candidate', id, 'symbol', symbol, 'error:', (err2 as any).message || String(err2));
-            }
-          }
-          // otherwise continue to next candidate
-        }
-      }
-
-      if (!success) {
-        console.warn('CoinPaprika returned no usable ticker for symbol', symbol, 'triedIds:', triedIds.join(', '));
-      }
-    } catch (err: any) {
-      console.warn('CoinPaprika search failed for symbol', symbol, 'error:', (err as any).message || String(err));
-      // continue with other symbols
-    }
-  }
-  return { provider: PROVIDER_COINPAPRIKA, data: out, headers: {} };
-}
-
-// Helper: isolate invalid ids when a batch returns 400 by checking ids individually
-async function isolateInvalidIds(batch: string[], vsCurrencies: string[], headers: Record<string, string>) {
-  const validData: Record<string, any> = {};
-  const invalidIds: string[] = [];
-  for (const id of batch) {
-    const params = { ids: id, vs_currencies: vsCurrencies.join(',') };
-    const config: any = { params, timeout: 10000 };
-    if (headers && Object.keys(headers).length) config.headers = headers;
-    try {
-      const res = await retry(() => axios.get(COINGECKO_URL, config), 1);
-      if (res && res.data) Object.assign(validData, res.data);
-    } catch (err: any) {
-      const status = err?.response?.status;
-      if (status === 400) {
-        invalidIds.push(id);
-      } else if (status === 429) {
-        // If we hit rate limit while isolating, respect Retry-After then retry once
-        const rh = err?.response?.headers?.['retry-after'];
-        const waitSec = Number(rh) || 1;
-        await sleep(waitSec * 1000 + 250);
-        try {
-          const res = await axios.get(COINGECKO_URL, config);
-          if (res && res.data) Object.assign(validData, res.data);
-        } catch (err2: any) {
-          // if still failing, mark as missing (do not treat as invalid)
-          console.warn('Isolation request failed for id', id, 'error:', (err2 as any).message || String(err2));
-        }
-      } else {
-        // Other errors - log and continue (mark as missing)
-        console.warn('Isolation request failed for id', id, 'error:', (err as any).message || String(err));
-      }
-    }
-  }
-  return { validData, invalidIds };
-}
 
 async function fetchFiat() {
   // ECB publishes a simple XML feed with EUR as the base. We parse it here
@@ -338,19 +46,6 @@ async function fetchFiat() {
   return { base: 'EUR', date, rates };
 }
 
-async function retry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt >= retries) throw err;
-      attempt++;
-      const delay = Math.pow(2, attempt) * 100;
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-}
 
 export async function fetchAndStoreRates() {
   await initFirestore();
@@ -383,8 +78,6 @@ export async function fetchAndStoreRates() {
     coinGeckoFiats.push('usd', 'eur'); // ensure at least USD/EUR
   }
 
-  // Binance symbols: explicit override or derive from COINGECKO_MAP or uppercase ids
-  const configuredSymbols = (process.env.CRYPTO_SYMBOLS && process.env.CRYPTO_SYMBOLS.split(',').map(s => s.trim()).filter(Boolean)) || configuredIds.map(id => COINGECKO_MAP[id] ?? id.toUpperCase());
 
   let provider = PROVIDER_COINGECKO;
   let cryptoResult: any;
@@ -548,7 +241,6 @@ export async function fetchAndStoreRates() {
 
   // Expand rates to include all requested fiatCurrencies using ECB conversions if necessary
   const ecbRates: Record<string, number> = (fiat && fiat.rates) ? fiat.rates : {};
-  const ecbBase = (fiat && fiat.base) ? fiat.base.toUpperCase() : 'EUR';
 
   function convertUsingEcb(value: number | undefined, from: string | undefined, to: string): number | undefined {
     if (value == null || !from) return undefined;

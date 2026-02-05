@@ -20,14 +20,14 @@ describe('provider API key behavior', () => {
   it('sends CoinGecko API key header when COINGECKO_API_KEY is set', async () => {
     process.env.COINGECKO_API_KEY = 'test-cg-key';
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }, { id: 'ethereum', symbol: 'eth', name: 'Ethereum' }] });
       }
       if (typeof url === 'string' && url.includes('coingecko')) {
-        expect(opts).toBeDefined();
-        expect(opts.headers).toBeDefined();
-        expect(opts.headers['X-CG-PRO-API-KEY']).toBe('test-cg-key');
+        expect(_opts).toBeDefined();
+        expect(_opts.headers).toBeDefined();
+        expect(_opts.headers['X-CG-PRO-API-KEY']).toBe('test-cg-key');
         return Promise.resolve({ data: { bitcoin: { usd: 50000 }, ethereum: { usd: 2000 } }, headers: { 'x-test': 'ok' } });
       }
       if (typeof url === 'string' && url.includes('eurofxref')) {
@@ -45,7 +45,7 @@ describe('provider API key behavior', () => {
   it('falls back to CoinPaprika when CoinGecko fails', async () => {
     process.env.BINANCE_KEY = 'test-binance-key';
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin', symbol: 'btc', name: 'Bitcoin' }] });
       }

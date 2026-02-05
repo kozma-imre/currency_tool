@@ -21,7 +21,7 @@ describe('fetcher CoinPaprika multi-candidate fallback', () => {
     // Test with configured cryptos that include AAVE and ALGORAND
     process.env.CRYPTO_IDS = 'bitcoin,aave,algorand';
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin' }, { id: 'ethereum' }, { id: 'aave' }, { id: 'algorand' }] });
       }
@@ -36,7 +36,7 @@ describe('fetcher CoinPaprika multi-candidate fallback', () => {
       }
       if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
         if (url.includes('/search')) {
-          const q = opts && opts.params && opts.params.query ? String(opts.params.query).toUpperCase() : '';
+          const q = _opts && _opts.params && _opts.params.query ? String(_opts.params.query).toUpperCase() : '';
           if (q === 'AAVE') {
             return Promise.resolve({ data: { coins: [{ id: 'aave-invalid', symbol: 'AAVE' }, { id: 'aave-aave', symbol: 'AAVE' }] } });
           }

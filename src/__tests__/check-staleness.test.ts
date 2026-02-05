@@ -31,7 +31,7 @@ function makeMockDb({ latestTimestamp, existingAlertState }: any) {
         return {
           doc: (id: string) => ({
             get: async () => ({ exists: !!existingAlertState, data: () => existingAlertState }),
-            set: async (obj: any, opts: any) => { monitoring.set(id, obj); },
+            set: async (obj: any, _opts: any) => { monitoring.set(id, obj); },
           }),
         };
       }
@@ -44,7 +44,7 @@ function makeMockDb({ latestTimestamp, existingAlertState }: any) {
 
 test('writes monitoring entry and sets alert state when stale', async () => {
   const staleDate = new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString();
-  const { db, monitoring } = makeMockDb({ latestTimestamp: staleDate, existingAlertState: null });
+  const { db } = makeMockDb({ latestTimestamp: staleDate, existingAlertState: null });
 
   // disable real Telegram send
   process.env.TELEGRAM_ALERTING_ENABLED = 'false';

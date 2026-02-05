@@ -12,7 +12,7 @@ describe('notify on fetch failure', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     process.env = { ...realEnv };
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {}) as any);
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(((_code?: number) => {}) as any);
   });
 
   afterEach(() => {

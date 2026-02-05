@@ -1,5 +1,4 @@
 const fs = require('fs');
-const path = require('path');
 
 function usage() {
   console.log('Usage: ts-node scripts/set-cron.ts "<cron>" [--commit] [--create-pr]');

@@ -21,7 +21,7 @@ describe('fetcher geo-block fallback', () => {
   it('proceeds with partial CoinGecko data when Binance returns 451', async () => {
     const tgSpy = jest.spyOn(notify, 'sendTelegramAlert').mockImplementation(async () => ({ ok: true } as any));
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin' }, { id: 'ethereum' }] });
       }

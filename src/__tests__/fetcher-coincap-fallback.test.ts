@@ -16,7 +16,7 @@ describe('fetcher CoinCap fallback', () => {
   });
 
   it('uses CoinCap when Binance is geo-blocked for full fallback', async () => {
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin' }, { id: 'ethereum' }] });
       }
@@ -51,7 +51,7 @@ describe('fetcher CoinCap fallback', () => {
   it('merges CoinCap when Binance geo-blocks missing symbols after partial CoinGecko', async () => {
     const tgSpy = jest.spyOn(notify, 'sendTelegramAlert').mockImplementation(async () => ({ ok: true } as any));
 
-    mockedAxios.get.mockImplementation((url: any, opts?: any) => {
+    mockedAxios.get.mockImplementation((url: any, _opts?: any) => {
       if (typeof url === 'string' && url.includes('coins/list')) {
         return Promise.resolve({ data: [{ id: 'bitcoin' }, { id: 'ethereum' }] });
       }
