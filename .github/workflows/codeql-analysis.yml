@@ -1,0 +1,47 @@
+name: 'CodeQL'
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 3 * * 0'
+
+# Give the upload the permissions it needs
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (CodeQL)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: typescript
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      # Only run the analysis/upload for non-fork PRs (upload requires write permissions the runner
+      # does not have for forks). This avoids the "Resource not accessible by integration" error.
+      - name: Perform CodeQL analysis and upload SARIF
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request && github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/analyze@v2
+        with:
+          output: results/javascript.sarif
+
+      - name: Note skipped CodeQL upload on fork
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: echo "CodeQL analysis/upload skipped for forked PRs to avoid upload permission errors."
