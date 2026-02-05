@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: '0 0 * * 0'
 
+# Ensure SARIF upload has required permissions and avoid failing for forked PRs
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
 jobs:
   analyze:
     name: Analyze
@@ -20,4 +26,9 @@ jobs:
         with:
           languages: javascript
       - name: Perform CodeQL Analysis
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request && github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/analyze@v2
+
+      - name: Note skipped CodeQL upload on fork
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: echo "CodeQL analysis/upload skipped for forked PRs to avoid upload permission errors."
