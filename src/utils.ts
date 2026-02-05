@@ -11,7 +11,9 @@ export async function retry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
     } catch (err) {
       if (attempt >= retries) throw err;
       attempt++;
-      const delay = Math.pow(2, attempt) * baseDelay;
+      // Add optional jitter to avoid thundering herd on retries in production
+      const jitterFactor = process.env.NODE_ENV === 'test' ? 0 : Math.random() * 0.5; // up to +50%
+      const delay = Math.pow(2, attempt) * baseDelay * (1 + jitterFactor);
       await new Promise((r) => setTimeout(r, delay));
     }
   }

@@ -3,9 +3,15 @@ import { fetchCryptoFromCoinPaprika, fetchTopCoinpaprikaIds } from '../providers
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+import * as fs from 'fs';
+import * as os from 'os';
+const COINPAPRIKA_TOP_CACHE_FILE = require('path').join(os.tmpdir(), 'coinpaprika-top.json');
 
 describe('CoinPaprika top-list fallback', () => {
-  beforeEach(() => jest.resetAllMocks());
+  beforeEach(() => {
+    jest.resetAllMocks();
+    try { if (fs.existsSync(COINPAPRIKA_TOP_CACHE_FILE)) fs.unlinkSync(COINPAPRIKA_TOP_CACHE_FILE); } catch (e) { /* ignore */ }
+  });
 
   it('uses top-list mapping when search returns no candidates', async () => {
     const symbol = 'ALGORAND';

@@ -171,9 +171,51 @@ export async function fetchCryptoFromCoinPaprika(symbols: string[]) {
       // ticker lookup using the symbol as id before giving up.
       const status = err?.response?.status;
       if (status === 400) {
+        // Try to fetch top-list and perform mapping fallback similar to empty search flow
+        console.warn('CoinPaprika search returned 400 for symbol', symbol, '; attempting top-list mapping fallback');
+        try {
+          // Always attempt to fetch a top list on 400 to increase chance of mapping
+          topList = await fetchTopCoinpaprikaIds(Math.max(COINPAPRIKA_TOP_N, symbols.length));
+          // rebuild maps
+          for (const item of topList) {
+            symbolMap[String(item.symbol).toUpperCase()] = item.id;
+            const norm = String(item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (norm) nameMap[norm] = item.id;
+          }
+        } catch (e) {
+          console.warn('CoinPaprika top-list fetch failed during 400 fallback:', (e as any).message || String(e));
+        }
+
+        let mappedId: string | undefined;
+        if (symbolMap && symbolMap[String(symbol).toUpperCase()]) {
+          mappedId = symbolMap[String(symbol).toUpperCase()];
+          console.warn('CoinPaprika: matched symbol via top list mapping (400 fallback)', symbol, '->', mappedId);
+        }
+        if (!mappedId && nameMap) {
+          const norm = String(symbol).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          if (norm && nameMap[norm]) {
+            mappedId = nameMap[norm];
+            console.warn('CoinPaprika: matched name via top list mapping (400 fallback)', symbol, '->', mappedId);
+          }
+        }
+        if (mappedId) {
+          try {
+            // Attempt a direct axios get (wrapped in retry) for the mapped id
+            const tickerRes = await retry(() => axios.get(`https://api.coinpaprika.com/v1/tickers/${mappedId}`, { timeout: 10000 }), 2);
+            const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
+            const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
+            const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;
+            out[String(symbol).toUpperCase()] = { usd, eur };
+            continue;
+          } catch (mappedErr: any) {
+            console.warn('CoinPaprika mapped ticker failed during 400 fallback for', mappedId, 'symbol', symbol, 'error:', (mappedErr as any).message || String(mappedErr));
+          }
+        }
+
+        // Fallback to guess id lookup
         try {
           const guessId = String(symbol).toLowerCase();
-          const tickerRes = await axios.get(`https://api.coinpaprika.com/v1/tickers/${guessId}`, { timeout: 10000 });
+          const tickerRes = await retry(() => axios.get(`https://api.coinpaprika.com/v1/tickers/${guessId}`, { timeout: 10000 }), 2);
           const quotes = tickerRes.data && tickerRes.data.quotes ? tickerRes.data.quotes : {};
           const usd = quotes.USD ? Number(quotes.USD.price) : undefined;
           const eur = quotes.EUR ? Number(quotes.EUR.price) : undefined;

@@ -116,11 +116,12 @@ export async function isolateInvalidIds(batch: string[], vsCurrencies: string[],
       if (status === 400) {
         invalidIds.push(id);
       } else if (status === 429) {
+        // Respect Retry-After header and use retry wrapper for exponential backoff + jitter
         const rh = err?.response?.headers?.['retry-after'];
         const waitSec = Number(rh) || 1;
         await sleep(waitSec * 1000 + 250);
         try {
-          const res = await axios.get(COINGECKO_URL, config);
+          const res = await retry(() => axios.get(COINGECKO_URL, config), 2);
           if (res && res.data) Object.assign(validData, res.data);
         } catch (err2: any) {
           console.warn('Isolation request failed for id', id, 'error:', (err2 as any).message || String(err2));
