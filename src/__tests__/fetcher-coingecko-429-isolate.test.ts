@@ -60,7 +60,7 @@ describe('CoinGecko 429 isolation', () => {
         }
       }
 
-      if (typeof url === 'string' && url.includes('api.binance.com')) {
+      if (typeof url === 'string' && isHost(url, 'api.binance.com')) {
         const e: any = new Error('geo');
         e.response = { status: 451 };
         return Promise.reject(e);
