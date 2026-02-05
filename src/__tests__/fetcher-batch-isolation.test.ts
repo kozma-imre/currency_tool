@@ -46,8 +46,9 @@ describe('fetcher batch isolation for CoinGecko 400', () => {
         if (ids.includes('ethereum')) data['ethereum'] = { usd: 2000, eur: 1800 };
         return Promise.resolve({ data });
       }
-      if (url === 'https://api.exchangerate.host/latest') {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (url === 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml') {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       if (url === 'https://api.binance.com/api/v3/ticker/price') {
         const sym = config?.params?.symbol;

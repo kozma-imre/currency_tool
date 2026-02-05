@@ -10,7 +10,7 @@ import type { RatesResult } from './types';
 const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price';
 const COINGECKO_LIST_URL = 'https://api.coingecko.com/api/v3/coins/list';
 const COINGECKO_MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
-const ECB_URL = 'https://api.exchangerate.host/latest';
+const ECB_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
 const BINANCE_URL = 'https://api.binance.com/api/v3/ticker/price';
 
 const COINGECKO_COINS_CACHE_TTL = Number(process.env.COINGECKO_COINS_CACHE_TTL) || 24 * 60 * 60; // seconds
@@ -261,8 +261,28 @@ async function isolateInvalidIds(batch: string[], vsCurrencies: string[], header
 }
 
 async function fetchFiat() {
-  const res = await axios.get(ECB_URL, { timeout: 10000 });
-  return res.data; // { base, date, rates: { USD: 1.08, ... } }
+  // ECB publishes a simple XML feed with EUR as the base. We parse it here
+  // to produce { base, date, rates } similar to exchangerate.host output.
+  const res = await axios.get(ECB_URL, { timeout: 10000, responseType: 'text' });
+  const xml: string = res.data;
+  // extract date: <Cube time="YYYY-MM-DD"> ... </Cube>
+  const timeMatch = xml.match(/<Cube\s+time=['"]([^'"\s]+)['"]/i);
+  const date = timeMatch ? timeMatch[1] : undefined;
+  const rates: Record<string, number> = {};
+  // match <Cube currency="USD" rate="1.0812"/>
+  const re = /<Cube\s+currency=['"]([A-Z]+)['"]\s+rate=['"]([0-9.]+)['"]\s*\/?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const curr = m[1];
+    const rateStr = m[2];
+    if (curr && rateStr) {
+      const rate = Number(rateStr);
+      if (!Number.isNaN(rate)) {
+        rates[curr] = rate;
+      }
+    }
+  }
+  return { base: 'EUR', date, rates };
 }
 
 async function retry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
@@ -322,6 +342,9 @@ export async function fetchAndStoreRates() {
 
   if (filteredIds.length === 0) {
     console.warn('No configured CRYPTO_IDS are supported by CoinGecko; proceeding to CoinPaprika fallback or ECB-only.');
+    // Ensure we have a safe default so later code that reads `cryptoResult` does not crash.
+    cryptoResult = { provider: 'none', data: {}, headers: {} } as any;
+    provider = 'none';
   } else {
     if (filteredIds.length < configuredIds.length) {
       const dropped = configuredIds.filter(id => !supportedIds.has(id));
@@ -561,7 +584,7 @@ export async function fetchAndStoreRates() {
       fetchedAt,
       fiatBase: fiat?.base ?? 'EUR',
       headers: headersObj,
-      rawResponse: JSON.stringify(cryptoResult.data),
+      rawResponse: truncateRaw(cryptoResult.data),
     },
   };
 

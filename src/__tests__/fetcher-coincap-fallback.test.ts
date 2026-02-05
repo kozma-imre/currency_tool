@@ -35,8 +35,9 @@ describe('fetcher CoinCap fallback', () => {
           return Promise.resolve({ data: { id: symbol === 'BTC' ? 'btc-bitcoin' : 'eth-ethereum', quotes: { USD: { price: symbol === 'BTC' ? 50000 : 2500 } } }, headers: {} });
         }
       }
-      if (typeof url === 'string' && url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (typeof url === 'string' && url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unknown url'));
     });
@@ -72,8 +73,9 @@ describe('fetcher CoinCap fallback', () => {
           return Promise.resolve({ data: { id: 'eth-ethereum', quotes: { USD: { price: 2500 } } }, headers: {} });
         }
       }
-      if (typeof url === 'string' && url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (typeof url === 'string' && url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unknown url'));
     });

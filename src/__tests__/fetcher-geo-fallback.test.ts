@@ -34,8 +34,9 @@ describe('fetcher geo-block fallback', () => {
         const e: any = new Error('paprika-fail');
         return Promise.reject(e);
       }
-      if (typeof url === 'string' && url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (typeof url === 'string' && url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unknown url'));
     });

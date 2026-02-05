@@ -33,8 +33,9 @@ describe('fetcher config via env', () => {
         expect(opts.params.vs_currencies).toBe('usd');
         return Promise.resolve({ data: { bitcoin: { usd: 60000 }, litecoin: { usd: 100 } }, headers: {} });
       }
-      if (url === 'https://api.exchangerate.host/latest') {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (url === 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml') {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unexpected url'));
     });
@@ -60,8 +61,9 @@ describe('fetcher config via env', () => {
         expect(opts.params.ids).toBe('bitcoin,ethereum,litecoin');
         return Promise.resolve({ data: { bitcoin: { usd: 60000 }, ethereum: { usd: 2000 }, litecoin: { usd: 100 } }, headers: {} });
       }
-      if (url === 'https://api.exchangerate.host/latest') {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (url === 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml') {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unexpected url'));
     });
@@ -90,8 +92,9 @@ describe('fetcher config via env', () => {
         expect(opts.params && (opts.params.symbol === 'BTCUSDT' || opts.params.symbol === 'LTCUSDT')).toBe(true);
         return Promise.resolve({ data: { price: '123' }, headers: {} });
       }
-      if (url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unexpected url'));
     });

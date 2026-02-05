@@ -24,3 +24,5 @@ firebase-debug.log
 service-account*.json
 *.key
 *.pem
+
+.github/copilot-instructions.md

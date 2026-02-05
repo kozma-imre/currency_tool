@@ -86,6 +86,43 @@ npm run cleanup-snapshots
 SNAPSHOT_RETENTION_DAYS=7 npm run cleanup-snapshots
 ```
 
+## Sequence diagram: runtime fetch flow 🔁
+
+The following sequence diagram shows the runtime interactions and fallback ordering used by `fetchAndStoreRates()` (CoinGecko → Binance → CoinPaprika, with ECB for fiat conversions and Firestore persistence). It highlights where alerts may be sent and when fallbacks are attempted.
+
+```mermaid
+sequenceDiagram
+  participant Fetcher
+  participant CoinGecko
+  participant Binance
+  participant CoinPaprika
+  participant ECB as exchangerate.host
+  participant Firestore
+  participant Telegram
+
+  Fetcher->>CoinGecko: batched price request
+  alt CoinGecko partial or missing
+    Fetcher->>Binance: fetch missing symbols
+    alt Binance success
+      Binance-->>Fetcher: prices
+    else Binance fails
+      Fetcher->>CoinPaprika: fallback for missing symbols
+      CoinPaprika-->>Fetcher: prices or no-data
+    end
+  else CoinGecko success
+    CoinGecko-->>Fetcher: prices
+  end
+
+  Fetcher->>ECB: fetch fiat/conversion rates
+  ECB-->>Fetcher: fiat data
+
+  Fetcher->>Firestore: writeLatest & writeSnapshot
+  alt Fallback/alerts
+    Fetcher->>Telegram: sendTelegramAlert
+  end
+```
+
+
 Optional provider keys (local / CI)
 - You can set provider keys in `.env` or as GitHub Secrets:
   - `COINGECKO_API_KEY` — optional CoinGecko Pro key. If set, requests will include the `X-CG-PRO-API-KEY` header.

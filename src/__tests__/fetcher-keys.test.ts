@@ -30,8 +30,9 @@ describe('provider API key behavior', () => {
         expect(opts.headers['X-CG-PRO-API-KEY']).toBe('test-cg-key');
         return Promise.resolve({ data: { bitcoin: { usd: 50000 }, ethereum: { usd: 2000 } }, headers: { 'x-test': 'ok' } });
       }
-      if (typeof url === 'string' && url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (typeof url === 'string' && url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unknown url'));
     });
@@ -59,8 +60,9 @@ describe('provider API key behavior', () => {
           return Promise.resolve({ data: { id: 'btc-bitcoin', quotes: { USD: { price: 60000 } } }, headers: {} });
         }
       }
-      if (typeof url === 'string' && url.includes('exchangerate.host')) {
-        return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
+      if (typeof url === 'string' && url.includes('eurofxref')) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">\n  <Cube>\n    <Cube time="2026-02-04">\n      <Cube currency="USD" rate="1.08"/>\n    </Cube>\n  </Cube>\n</gesmes:Envelope>`;
+        return Promise.resolve({ data: xml });
       }
       return Promise.reject(new Error('unknown url'));
     });
