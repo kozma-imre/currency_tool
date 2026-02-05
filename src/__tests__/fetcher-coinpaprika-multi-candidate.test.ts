@@ -71,9 +71,9 @@ describe('fetcher CoinPaprika multi-candidate fallback', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coingecko+coinpaprika');
-    expect(payload.rates.BTC!.usd).toBe(50000);
-    expect(payload.rates.AAVE!.usd).toBe(90);
-    expect(payload.rates.ALGORAND!.usd).toBe(0.10);
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.USD.AAVE).toBe(90);
+    expect(payload.rates.USD.ALGORAND).toBeCloseTo(0.10);
     expect(tgSpy).not.toHaveBeenCalled();
   });
 });

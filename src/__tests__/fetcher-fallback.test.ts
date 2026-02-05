@@ -40,7 +40,7 @@ describe('fetcher fallback behavior', () => {
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('binance');
     expect(payload).toHaveProperty('rates');
-    expect(payload.rates.BTC!.usd).toBe(60000);
+    expect(payload.rates.USD.BTC).toBe(60000);
     expect(firestore.writeSnapshot).toHaveBeenCalled();
     expect(firestore.writeMonitoringLog).toHaveBeenCalled();
   });

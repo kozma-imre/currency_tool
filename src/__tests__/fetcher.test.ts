@@ -29,5 +29,7 @@ test('fetchAndStoreRates returns payload with provider and rates', async () => {
   const payload = await fetchAndStoreRates();
   expect(payload).toHaveProperty('provider', 'coingecko');
   expect(payload).toHaveProperty('rates');
-  expect(payload.rates.BTC!.usd).toBe(60000);
+  // ensure USD/EUR present
+  expect(payload.rates.USD.BTC).toBe(60000);
+  expect(payload.rates.EUR.BTC).toBeCloseTo(60000 * (1 / 1.08));
 });

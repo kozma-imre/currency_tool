@@ -319,7 +319,7 @@ export async function fetchAndStoreRates() {
     console.warn('Failed to persist ECB fiat data to Firestore', (e as any).message || String(e));
   }
 
-  const rates: RatesResult = {};
+  let rates: any = {};
   // Normalize raw provider result into symbol -> { usd?, eur? }
   if (cryptoResult.provider === PROVIDER_COINGECKO) {
     for (const [id, vals] of Object.entries(cryptoResult.data)) {
@@ -385,6 +385,72 @@ export async function fetchAndStoreRates() {
     rates[sym] = target as any;
   }
 
+  // Transform symbol->fiat mapping into base->symbol mapping (breaking change requested)
+  const BASES = ['eur', 'usd'];
+  const ratesByBase: Record<string, Record<string, number>> = {};
+  for (const b of BASES) ratesByBase[b.toUpperCase()] = {};
+  for (const [sym, vals] of Object.entries(rates)) {
+    const v = vals as Record<string, number>;
+    // Ensure EUR/USD are derived if one side exists and ECB data allows conversion
+    if (v['eur'] == null && v['usd'] != null) {
+      // Prefer direct ECB USD rate if available (more robust in test mocks)
+      const usdRate = (fiat && fiat.rates && ((fiat.rates as any).USD || (fiat.rates as any).usd)) || undefined;
+      let derived: number | undefined = undefined;
+      if (usdRate != null) {
+        derived = Number(v['usd']) * (1 / usdRate);
+      } else {
+        derived = convertUsingEcb(v['usd'], 'USD', 'EUR');
+      }
+      if (derived != null) v['eur'] = derived;
+    }
+    if (v['usd'] == null && v['eur'] != null) {
+      const usdRate = (fiat && fiat.rates && ((fiat.rates as any).USD || (fiat.rates as any).usd)) || undefined;
+      let derived: number | undefined = undefined;
+      if (usdRate != null) {
+        derived = Number(v['eur']) * usdRate;
+      } else {
+        derived = convertUsingEcb(v['eur'], 'EUR', 'USD');
+      }
+      if (derived != null) v['usd'] = derived;
+    }
+    for (const b of BASES) {
+      const val = v[b];
+      if (val != null) ratesByBase[b.toUpperCase()][sym] = Number(val);
+    }
+  }
+
+  // Replace rates with the new mapping
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  const ratesByBaseTyped: any = ratesByBase;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  (rates as any) = ratesByBaseTyped;
+
+  // Ensure cross-base derived values exist: derive EUR from USD when possible and vice versa
+  try {
+    if ((rates as any).USD) {
+      (rates as any).EUR = (rates as any).EUR || {};
+      for (const [sym, usdVal] of Object.entries((rates as any).USD)) {
+        if ((rates as any).EUR[sym] == null) {
+          const eurVal = convertUsingEcb(Number(usdVal), 'USD', 'EUR');
+          if (eurVal != null) (rates as any).EUR[sym] = eurVal;
+        }
+      }
+    }
+    if ((rates as any).EUR) {
+      (rates as any).USD = (rates as any).USD || {};
+      for (const [sym, eurVal] of Object.entries((rates as any).EUR)) {
+        if ((rates as any).USD[sym] == null) {
+          const usdVal = convertUsingEcb(Number(eurVal), 'EUR', 'USD');
+          if (usdVal != null) (rates as any).USD[sym] = usdVal;
+        }
+      }
+    }
+  } catch (e) {
+    // ignore derivation failures
+  }
+
   const headersObj = (cryptoResult.headers && typeof (cryptoResult.headers as any).toJSON === 'function')
     ? (cryptoResult.headers as any).toJSON()
     : JSON.parse(JSON.stringify(cryptoResult.headers ?? {}));
@@ -401,18 +467,40 @@ export async function fetchAndStoreRates() {
 
   const fetchedAt = new Date().toISOString();
 
+  // Helper to determine whether rates object contains any symbols across bases
+  function isRatesEmpty(r: any) {
+    if (!r || Object.keys(r).length === 0) return true;
+    return Object.values(r).every((m: any) => !m || Object.keys(m).length === 0);
+  }
+
   // If we failed to obtain any crypto rates at all, try a CoinPaprika top-N fallback when configured for top:N
-  if (!Object.keys(rates).length) {
+  if (isRatesEmpty(rates)) {
     // Try top-N CoinPaprika tickers as a last-resort fallback if requested
     if (!provider || provider === PROVIDER_NONE || provider === 'none') {
       if (typeof requestedTopN === 'number' && requestedTopN > 0) {
         try {
           const topTickers = await fetchTopCoinpaprikaTickers(requestedTopN);
           if (topTickers && Object.keys(topTickers).length) {
-            // adopt the CoinPaprika top tickers as our rates (already keyed by symbol)
+            // topTickers is symbol -> { usd?, eur? }
+            if (!rates.USD) rates.USD = {};
+            if (!rates.EUR) rates.EUR = {};
             for (const [sym, vals] of Object.entries(topTickers)) {
-              // pick only requested frc (fiat currencies) - keep usd/eur for later conversion
-              rates[sym] = vals as any;
+              const v = vals as any;
+              // prefer USD if present
+              if (v.usd != null) {
+                rates.USD[String(sym)] = Number(v.usd);
+                // compute EUR from USD using ECB direct rate when available
+                const usdRate = (fiat && fiat.rates && (fiat.rates as any).USD) || (fiat && fiat.rates && (fiat.rates as any).usd) || undefined;
+                if (usdRate != null) {
+                  rates.EUR[String(sym)] = Number(v.usd) * (1 / usdRate);
+                }
+              } else if (v.eur != null) {
+                rates.EUR[String(sym)] = Number(v.eur);
+                const usdRate = (fiat && fiat.rates && (fiat.rates as any).USD) || (fiat && fiat.rates && (fiat.rates as any).usd) || undefined;
+                if (usdRate != null) {
+                  rates.USD[String(sym)] = Number(v.eur) * usdRate;
+                }
+              }
             }
             provider = PROVIDER_COINPAPRIKA;
             try { await sendTelegramAlert(`CoinPaprika top-${requestedTopN} fallback used; returning ${Object.keys(topTickers).length} symbols`); } catch (e) { addErrorMsg('telegram-send-fail', e); }
@@ -425,7 +513,7 @@ export async function fetchAndStoreRates() {
   }
 
   // If still empty after attempting top-N fallback, mark provider none and alert
-  if (!Object.keys(rates).length) {
+  if (isRatesEmpty(rates)) {
     console.warn('No crypto rates available after fallbacks; marking provider as none and sending alert');
     provider = PROVIDER_NONE;
     try {

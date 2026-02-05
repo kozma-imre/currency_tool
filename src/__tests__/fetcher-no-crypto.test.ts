@@ -50,7 +50,9 @@ describe('fetcher no crypto fallback', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('none');
-    expect(Object.keys(payload.rates || {}).length).toBe(0);
+    // rates are organized by base; when no crypto rates are present each base map should be empty
+    expect(Object.keys(payload.rates.EUR || {}).length).toBe(0);
+    expect(Object.keys(payload.rates.USD || {}).length).toBe(0);
     expect(tgSpy).toHaveBeenCalled();
     const called = tgSpy.mock.calls.some(c => String(c[0]).includes('No crypto rates were fetched'));
     expect(called).toBe(true);

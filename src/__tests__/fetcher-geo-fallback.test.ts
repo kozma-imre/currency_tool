@@ -44,8 +44,8 @@ describe('fetcher geo-block fallback', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coingecko');
-    expect(payload.rates.BTC!.usd).toBe(50000);
-    expect(payload.rates).not.toHaveProperty('ETH');
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.USD).not.toHaveProperty('ETH');
     expect(tgSpy).toHaveBeenCalled();
     const calledWith = tgSpy.mock.calls[0]![0] as string;
     expect(calledWith).toContain('CoinPaprika fallback');

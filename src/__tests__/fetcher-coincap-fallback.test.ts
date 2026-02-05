@@ -45,8 +45,8 @@ describe('fetcher CoinCap fallback', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coinpaprika');
-    expect(payload.rates.BTC!.usd).toBe(50000);
-    expect(payload.rates.ETH!.usd).toBe(2500);
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.USD.ETH).toBe(2500);
   });
 
   it('merges CoinCap when Binance geo-blocks missing symbols after partial CoinGecko', async () => {
@@ -83,8 +83,8 @@ describe('fetcher CoinCap fallback', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coingecko+coinpaprika');
-    expect(payload.rates.BTC!.usd).toBe(50000);
-    expect(payload.rates.ETH!.usd).toBe(2500);
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.USD.ETH).toBe(2500);
     expect(tgSpy).not.toHaveBeenCalled(); // no need to send alert when CoinCap succeeded
   });
 });

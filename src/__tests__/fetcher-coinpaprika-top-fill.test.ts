@@ -50,10 +50,10 @@ describe('fetcher coinpaprika top-N fill fallback', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    // Expect that we end up with top 3 filled
+    // Expect that we end up with top 3 filled (USD quotes exist)
     expect(payload.provider).toMatch(/coinpaprika/);
-    expect(payload.rates.A).toBeDefined();
-    expect(payload.rates.B).toBeDefined();
-    expect(payload.rates.C).toBeDefined();
+    expect(payload.rates.USD.A).toBeDefined();
+    expect(payload.rates.USD.B).toBeDefined();
+    expect(payload.rates.USD.C).toBeDefined();
   });
 });

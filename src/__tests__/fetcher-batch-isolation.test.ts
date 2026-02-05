@@ -65,10 +65,11 @@ describe('fetcher batch isolation for CoinGecko 400', () => {
     const payload = await fetchAndStoreRates();
 
     expect(payload.provider).toBe('coingecko');
-    expect(payload.rates).toHaveProperty('BTC');
-    expect(payload.rates).toHaveProperty('ETH');
+    // rates are keyed by base fiat
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD).toHaveProperty('ETH');
     // ensure the invalid id was effectively dropped
-    expect(Object.keys(payload.rates).map(s => s.toUpperCase()).includes('FIGURE-HELOC')).toBeFalsy();
+    expect(Object.keys(payload.rates.USD).map(s => s.toUpperCase()).includes('FIGURE-HELOC')).toBeFalsy();
 
     // cleanup
     (console.warn as jest.Mock).mockRestore();

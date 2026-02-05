@@ -88,8 +88,8 @@ describe('CoinGecko 429 isolation', () => {
     // give the dry-run logging a moment to flush to avoid Jest "Cannot log after tests are done" races
     await new Promise((r) => setTimeout(r, 500));
 
-    expect(payload.rates.AAVE!.usd).toBe(90);
-    expect(payload.rates.ALGORAND!.usd).toBe(0.10); // recovered via CoinPaprika fallback
+    expect(payload.rates.USD.AAVE).toBe(90);
+    expect(payload.rates.USD.ALGORAND).toBeCloseTo(0.10); // recovered via CoinPaprika fallback
 
     // Ensure alerts were sent: one for dropped invalid ids and one for partial recovery
     expect(tgSpy).toHaveBeenCalled();

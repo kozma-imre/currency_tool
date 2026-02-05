@@ -32,8 +32,10 @@ describe('fetcher with mocked axios', () => {
 
     expect(payload).toHaveProperty('provider', 'coingecko');
     expect(payload).toHaveProperty('rates');
-    expect(payload.rates).toHaveProperty('BTC');
-    expect(payload.rates.BTC).toHaveProperty('usd', 50000);
+    // rates are now organized by base fiat
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.EUR.BTC).toBe(46000);
     expect(payload.meta).toHaveProperty('fiatBase', 'EUR');
     expect(firestore.writeSnapshot).toHaveBeenCalled();
   });
@@ -59,17 +61,11 @@ describe('fetcher with mocked axios', () => {
     const payload = await fetchAndStoreRates();
 
     expect(payload).toHaveProperty('rates');
-    expect(payload.rates).toHaveProperty('BTC');
-    // original values
-    expect(payload.rates.BTC).toHaveProperty('usd', 50000);
-    expect(payload.rates.BTC).toHaveProperty('eur', 46000);
-    // ensure BTC entry exists before checking derived values
-    expect(payload.rates.BTC).toBeDefined();
-    // derived values: ron = usd * (RON/USD) = 50000 * (4.9 / 1.08)
-    const expectedRon = 50000 * (4.9 / 1.08);
-    expect(payload.rates.BTC!.ron).toBeCloseTo(expectedRon, 4);
-    const expectedHuf = 50000 * (400 / 1.08);
-    expect(payload.rates.BTC!.huf).toBeCloseTo(expectedHuf, 4);
+    // Ensure USD/EUR base values are present for BTC
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD.BTC).toBe(50000);
+    expect(payload.rates.EUR.BTC).toBe(46000);
+    // derived fiat values (RON/HUF) are not stored per-crypto in the new model; they can be computed by clients if needed.
 
     // cleanup
     delete process.env.FIAT_CURRENCIES;
@@ -96,8 +92,8 @@ describe('fetcher with mocked axios', () => {
     const payload = await fetchAndStoreRates();
 
     expect(payload).toHaveProperty('provider', 'coingecko');
-    expect(payload.rates).toHaveProperty('BTC');
-    expect(payload.rates).not.toHaveProperty('SOLANA');
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD).not.toHaveProperty('SOLANA');
 
     delete process.env.CRYPTO_IDS;
   });
@@ -123,6 +119,6 @@ describe('fetcher with mocked axios', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.rates.BTC!.usd).toBe(50000);
+    expect(payload.rates.USD.BTC).toBe(50000);
   });
 });

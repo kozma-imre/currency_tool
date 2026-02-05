@@ -51,12 +51,14 @@ describe('fetcher coinpaprika top-N fallback', () => {
     });
 
     const payload = await fetchAndStoreRates();
+    // ensure provider
     expect(payload.provider).toBe('coinpaprika');
-    expect(payload.rates.A).toBeDefined();
-    expect(payload.rates.A!.usd).toBeCloseTo(10);
-    expect(payload.rates.B).toBeDefined();
-    expect(payload.rates.B!.usd).toBeCloseTo(20);
-    expect(payload.rates.C).toBeDefined();
-    expect(payload.rates.C!.usd).toBeCloseTo(30);
+    // USD quotes from CoinPaprika are available under USD base
+    expect(payload.rates.USD.A).toBeCloseTo(10);
+    expect(payload.rates.EUR.A).toBeCloseTo(10 * (1 / 1.08));
+    expect(payload.rates.USD.B).toBeCloseTo(20);
+    expect(payload.rates.EUR.B).toBeCloseTo(20 * (1 / 1.08));
+    expect(payload.rates.USD.C).toBeCloseTo(30);
+    expect(payload.rates.EUR.C).toBeCloseTo(30 * (1 / 1.08));
   });
 });

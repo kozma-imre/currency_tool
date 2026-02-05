@@ -40,7 +40,7 @@ describe('provider API key behavior', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coingecko');
-    expect(payload.rates.BTC!.usd).toBe(50000);
+    expect(payload.rates.USD.BTC).toBe(50000);
   });
 
   it('falls back to CoinPaprika when CoinGecko fails', async () => {
@@ -70,6 +70,6 @@ describe('provider API key behavior', () => {
 
     const payload = await fetchAndStoreRates();
     expect(payload.provider).toBe('coinpaprika');
-    expect(payload.rates.BTC!.usd).toBe(60000);
+    expect(payload.rates.USD.BTC).toBe(60000);
   });
 });

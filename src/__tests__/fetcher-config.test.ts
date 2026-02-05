@@ -40,8 +40,8 @@ describe('fetcher config via env', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.rates).toHaveProperty('BTC');
-    expect(payload.rates).toHaveProperty('LITECOIN');
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD).toHaveProperty('LITECOIN');
   });
 
   it('supports top-N via CRYPTO_IDS=top:3', async () => {
@@ -68,9 +68,10 @@ describe('fetcher config via env', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.rates).toHaveProperty('BTC');
-    expect(payload.rates).toHaveProperty('ETH');
-    expect(payload.rates).toHaveProperty('LITECOIN');
+    // rates are organized by base fiat
+    expect(payload.rates.USD).toHaveProperty('BTC');
+    expect(payload.rates.USD).toHaveProperty('ETH');
+    expect(payload.rates.USD).toHaveProperty('LITECOIN');
 
     delete process.env.CRYPTO_IDS;
   });
