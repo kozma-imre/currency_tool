@@ -24,11 +24,6 @@ describe('fetcher CoinCap fallback', () => {
         // simulate a full failure
         return Promise.reject(new Error('coingecko down'));
       }
-      if (typeof url === 'string' && url.includes('api.binance.com')) {
-        const e: any = new Error('geo');
-        e.response = { status: 451 };
-        return Promise.reject(e);
-      }
       if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
         // simulate CoinPaprika search + tickers sequence
         if (url.includes('/search')) {

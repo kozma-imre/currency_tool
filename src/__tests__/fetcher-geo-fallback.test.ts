@@ -29,10 +29,9 @@ describe('fetcher geo-block fallback', () => {
         // only return bitcoin price, simulate failure for other batch(s)
         return Promise.resolve({ data: { bitcoin: { usd: 50000 } }, headers: { etag: 'W/"abcd"' } });
       }
-      if (typeof url === 'string' && url.includes('api.binance.com')) {
-        // Simulate geo-block 451
-        const e: any = new Error('geo');
-        e.response = { status: 451 };
+      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+        // Simulate CoinPaprika failing so we proceed with partial CoinGecko data
+        const e: any = new Error('paprika-fail');
         return Promise.reject(e);
       }
       if (typeof url === 'string' && url.includes('exchangerate.host')) {
@@ -47,6 +46,6 @@ describe('fetcher geo-block fallback', () => {
     expect(payload.rates).not.toHaveProperty('ETH');
     expect(tgSpy).toHaveBeenCalled();
     const calledWith = tgSpy.mock.calls[0]![0] as string;
-    expect(calledWith).toContain('451');
+    expect(calledWith).toContain('CoinPaprika fallback');
   });
 });

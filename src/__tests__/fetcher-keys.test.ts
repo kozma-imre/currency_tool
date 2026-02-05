@@ -41,7 +41,7 @@ describe('provider API key behavior', () => {
     expect(payload.rates.BTC!.usd).toBe(50000);
   });
 
-  it('sends Binance API key header on fallback when BINANCE_KEY is set', async () => {
+  it('falls back to CoinPaprika when CoinGecko fails', async () => {
     process.env.BINANCE_KEY = 'test-binance-key';
 
     mockedAxios.get.mockImplementation((url: any, opts?: any) => {
@@ -51,11 +51,13 @@ describe('provider API key behavior', () => {
       if (typeof url === 'string' && url.includes('coingecko')) {
         return Promise.reject(new Error('coingecko down'));
       }
-      if (typeof url === 'string' && url.includes('api.binance.com')) {
-        expect(opts).toBeDefined();
-        expect(opts.headers).toBeDefined();
-        expect(opts.headers['X-MBX-APIKEY']).toBe('test-binance-key');
-        return Promise.resolve({ data: { price: '60000' }, headers: {} });
+      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+        if (url.includes('/search')) {
+          return Promise.resolve({ data: { coins: [{ id: 'btc-bitcoin', symbol: 'BTC' }] } });
+        }
+        if (url.includes('/tickers')) {
+          return Promise.resolve({ data: { id: 'btc-bitcoin', quotes: { USD: { price: 60000 } } }, headers: {} });
+        }
       }
       if (typeof url === 'string' && url.includes('exchangerate.host')) {
         return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });
@@ -64,7 +66,7 @@ describe('provider API key behavior', () => {
     });
 
     const payload = await fetchAndStoreRates();
-    expect(payload.provider).toBe('binance');
+    expect(payload.provider).toBe('coinpaprika');
     expect(payload.rates.BTC!.usd).toBe(60000);
   });
 });

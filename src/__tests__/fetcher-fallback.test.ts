@@ -23,9 +23,13 @@ describe('fetcher fallback behavior', () => {
         called++;
         return Promise.reject(new Error('coingecko down'));
       }
-      if (typeof url === 'string' && url.includes('api.binance.com')) {
-        // return a per-symbol response for BTCUSDT
-        return Promise.resolve({ data: { price: '60000' }, headers: {} });
+      if (typeof url === 'string' && url.includes('api.coinpaprika.com')) {
+        if (url.includes('/search')) {
+          return Promise.resolve({ data: { coins: [{ id: 'btc-bitcoin', symbol: 'BTC' }] } });
+        }
+        if (url.includes('/tickers')) {
+          return Promise.resolve({ data: { id: 'btc-bitcoin', quotes: { USD: { price: 60000 } } }, headers: {} });
+        }
       }
       if (typeof url === 'string' && url.includes('exchangerate.host')) {
         return Promise.resolve({ data: { base: 'EUR', date: '2026-02-04', rates: { USD: 1.08 } } });

@@ -47,6 +47,18 @@ export async function writeLatest(payload: any) {
   console.log('Wrote latest to Firestore', collectionName);
 }
 
+export async function writeLatestFiat(payload: any) {
+  if (!admin.apps.length) {
+    console.log('Dry-run write latest fiat:', JSON.stringify(payload, null, 2));
+    return;
+  }
+  const db = admin.firestore();
+  const collectionName = getCollectionName();
+  const ref = db.collection(collectionName).doc('latest_fiat');
+  await ref.set(payload, { merge: true });
+  console.log('Wrote latest fiat to Firestore', collectionName);
+}
+
 export async function writeSnapshot(payload: any, date = new Date()) {
   const docId = `history-${date.toISOString().slice(0, 10)}`;
   if (!admin.apps.length) {
