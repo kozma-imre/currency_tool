@@ -415,7 +415,7 @@ export async function fetchAndStoreRates() {
     }
     for (const b of BASES) {
       const val = v[b];
-      if (val != null) ratesByBase[b.toUpperCase()][sym] = Number(val);
+      if (val != null) ratesByBase[b.toUpperCase()]![sym] = Number(val);
     }
   }
 
