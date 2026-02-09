@@ -312,6 +312,14 @@ export async function fetchAndStoreRates() {
       if (typeof fsMod.writeLatestFiat === 'function') {
         await fsMod.writeLatestFiat(ecbPayload);
       }
+      // Also write a daily fiat snapshot if the function exists
+      if (typeof fsMod.writeSnapshotFiat === 'function') {
+        try {
+          await fsMod.writeSnapshotFiat(ecbPayload, new Date());
+        } catch (e) {
+          addErrorMsg('writeSnapshotFiat-fail', e);
+        }
+      }
     } catch (e) {
       console.log('Could not write latest fiat to Firestore (dry-run or missing function).', (e as any).message || String(e));
     }
